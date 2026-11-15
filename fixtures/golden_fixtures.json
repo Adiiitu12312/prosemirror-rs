@@ -1,0 +1,276 @@
+{
+  "version": "prosemirror-pin-1.0",
+  "model": [
+    {
+      "name": "paragraph_with_em_mark",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "Hello "
+              },
+              {
+                "type": "text",
+                "marks": [
+                  {
+                    "type": "em"
+                  }
+                ],
+                "text": "world"
+              },
+              {
+                "type": "text",
+                "text": "!"
+              }
+            ]
+          }
+        ]
+      },
+      "text_between_0_12": "Hello world",
+      "slice_1_7": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Hello "
+          }
+        ]
+      }
+    }
+  ],
+  "transform": [
+    {
+      "name": "replace_and_mark",
+      "initial_doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "The quick brown fox"
+              }
+            ]
+          }
+        ]
+      },
+      "final_doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "marks": [
+                  {
+                    "type": "strong"
+                  }
+                ],
+                "text": "The"
+              },
+              {
+                "type": "text",
+                "text": " slow brown fox"
+              }
+            ]
+          }
+        ]
+      },
+      "steps": [
+        {
+          "stepType": "replace",
+          "from": 5,
+          "to": 10,
+          "slice": {
+            "content": [
+              {
+                "type": "text",
+                "text": "slow"
+              }
+            ]
+          }
+        },
+        {
+          "stepType": "addMark",
+          "mark": {
+            "type": "strong"
+          },
+          "from": 1,
+          "to": 4
+        }
+      ],
+      "step_maps": [
+        [
+          5,
+          5,
+          4
+        ],
+        []
+      ],
+      "mapped_pos_6": 9
+    }
+  ],
+  "state": [
+    {
+      "name": "selection_and_insert",
+      "initial_doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "Selectable text"
+              }
+            ]
+          }
+        ]
+      },
+      "next_doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "Changed table text"
+              }
+            ]
+          }
+        ]
+      },
+      "selection_after": {
+        "from": 9,
+        "to": 9
+      }
+    }
+  ],
+  "history": [
+    {
+      "name": "basic_undo_redo",
+      "initial_doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "Initial"
+              }
+            ]
+          }
+        ]
+      },
+      "after_edit": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "Initial edit"
+              }
+            ]
+          }
+        ]
+      },
+      "after_undo": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "Initial"
+              }
+            ]
+          }
+        ]
+      },
+      "after_redo": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "Initial edit"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "commands": [
+    {
+      "name": "split_block",
+      "initial_doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "Line 1"
+              }
+            ]
+          },
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "Line 2"
+              }
+            ]
+          }
+        ]
+      },
+      "doc_after_split": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "Lin"
+              }
+            ]
+          },
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "e 1"
+              }
+            ]
+          },
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "Line 2"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

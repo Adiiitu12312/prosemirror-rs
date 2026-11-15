@@ -1,0 +1,37 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/prosemirror-model",
+    "crates/prosemirror-transform",
+    "crates/prosemirror-state",
+    "crates/prosemirror-history",
+    "crates/prosemirror-commands",
+    "crates/prosemirror-test-builder",
+    "crates/prosemirror-view",
+    "crates/prosemirror-fuzz",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/prosemirror-rs/prosemirror-rs"
+authors = ["prosemirror-rs contributors"]
+keywords = ["prosemirror", "editor", "rich-text", "crdt", "document-model"]
+categories = ["text-editors", "data-structures"]
+
+[workspace.dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+unicode-segmentation = "1.12"
+smallvec = { version = "1.13", features = ["serde"] }
+parking_lot = "0.12"
+tracing = "0.1"
+prosemirror-model = { path = "crates/prosemirror-model" }
+prosemirror-transform = { path = "crates/prosemirror-transform" }
+prosemirror-state = { path = "crates/prosemirror-state" }
+prosemirror-history = { path = "crates/prosemirror-history" }
+prosemirror-commands = { path = "crates/prosemirror-commands" }
+prosemirror-test-builder = { path = "crates/prosemirror-test-builder" }
+prosemirror-view = { path = "crates/prosemirror-view" }

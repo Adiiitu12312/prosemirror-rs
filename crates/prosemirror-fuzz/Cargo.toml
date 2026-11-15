@@ -1,0 +1,14 @@
+[package]
+name = "prosemirror-fuzz"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Differential fuzzing harness testing prosemirror-rs against the Node.js ProseMirror oracle"
+
+[dependencies]
+prosemirror-model = { workspace = true }
+prosemirror-transform = { workspace = true }
+prosemirror-state = { workspace = true }
+prosemirror-test-builder = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

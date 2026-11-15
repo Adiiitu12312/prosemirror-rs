@@ -1,0 +1,27 @@
+{
+  "name": "prosemirror-rs-oracle",
+  "version": "1.0.0",
+  "description": "JavaScript reference oracle and differential fuzzing harness for prosemirror-rs",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "oracle": "node oracle/server.js",
+    "test:oracle": "node oracle/test_oracle.js",
+    "fuzz:oracle": "node oracle/fuzz_oracle.js",
+    "fixtures": "node oracle/generate_fixtures.js"
+  },
+  "dependencies": {
+    "prosemirror-commands": "1.6.2",
+    "prosemirror-history": "1.4.1",
+    "prosemirror-model": "1.24.1",
+    "prosemirror-schema-basic": "1.2.3",
+    "prosemirror-schema-list": "1.4.1",
+    "prosemirror-state": "1.4.3",
+    "prosemirror-test-builder": "1.1.1",
+    "prosemirror-transform": "1.10.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.8.0"
+  }
+}

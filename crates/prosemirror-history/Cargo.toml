@@ -1,0 +1,13 @@
+[package]
+name = "prosemirror-history"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Pure Rust undo/redo history plugin matching ProseMirror history"
+
+[dependencies]
+prosemirror-model = { workspace = true }
+prosemirror-transform = { workspace = true }
+prosemirror-state = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
