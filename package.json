@@ -6,6 +6,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test": "npm run test:oracle && npm run fuzz:oracle",
     "oracle": "node oracle/server.js",
     "test:oracle": "node oracle/test_oracle.js",
     "fuzz:oracle": "node oracle/fuzz_oracle.js",
