@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use prosemirror_model::{replace_at_pos, Mark, Node, Slice};
+use prosemirror_model::{replace_at_pos, slice_utf16, Mark, Node, Slice};
 use crate::map::StepMap;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -140,16 +140,22 @@ where
             let child_to = if to < end { to - cur } else { child.node_size() };
             if child.is_text() {
                 let text = child.text().unwrap_or("");
-                let chars: Vec<char> = text.chars().collect();
+                let text_len = child.node_size();
                 if child_from > 0 {
-                    let pre: String = chars[..child_from].iter().collect();
-                    new_children.push(Node::new_text(pre, child.marks().to_vec()));
+                    let pre = slice_utf16(text, 0, child_from);
+                    if !pre.is_empty() {
+                        new_children.push(Node::new_text(pre, child.marks().to_vec()));
+                    }
                 }
-                let mid: String = chars[child_from..child_to].iter().collect();
-                new_children.push(Node::new_text(mid, f(child.marks())));
-                if child_to < chars.len() {
-                    let post: String = chars[child_to..].iter().collect();
-                    new_children.push(Node::new_text(post, child.marks().to_vec()));
+                let mid = slice_utf16(text, child_from, child_to);
+                if !mid.is_empty() {
+                    new_children.push(Node::new_text(mid, f(child.marks())));
+                }
+                if child_to < text_len {
+                    let post = slice_utf16(text, child_to, text_len);
+                    if !post.is_empty() {
+                        new_children.push(Node::new_text(post, child.marks().to_vec()));
+                    }
                 }
             } else {
                 let inner_from = if child_from > 0 { child_from - 1 } else { 0 };

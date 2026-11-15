@@ -74,6 +74,24 @@ fn test_transform_add_and_remove_mark() {
 }
 
 #[test]
+fn test_mapping_mirror_and_recover() {
+    use prosemirror_transform::Mapping;
+    let mut mapping = Mapping::new();
+    let map1 = StepMap::single(5, 5, 0); // Delete 5 chars at pos 5
+    let map2 = StepMap::single(5, 0, 5); // Re-insert (undone / mirrored)
+
+    mapping.append_map(map1, None);
+    mapping.append_map(map2, Some(0)); // Mirrors map 0
+
+    assert_eq!(mapping.get_mirror(0), Some(1));
+    assert_eq!(mapping.get_mirror(1), Some(0));
+
+    // A position inside the deleted range (e.g. 7) should recover its exact position after mirror
+    let recovered_pos = mapping.map(7, 1);
+    assert_eq!(recovered_pos, 7);
+}
+
+#[test]
 fn test_golden_transform_fixtures() {
     let json_str = include_str!("../fixtures/golden_fixtures.json");
     let val: serde_json::Value = serde_json::from_str(json_str).expect("parse json");

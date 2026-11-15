@@ -61,6 +61,50 @@ fn test_resolved_pos() {
 }
 
 #[test]
+fn test_builder_macro_and_tags() {
+    use prosemirror_test_builder::{doc, p};
+    let d = doc!(
+        p!("foo<a>bar<b>")
+    );
+    assert_eq!(d.tag("a"), 4); // 1 (open tag) + 3 ("foo") = 4
+    assert_eq!(d.tag("b"), 7); // 4 + 3 ("bar") = 7
+    assert_eq!(d.text_between(1, 4), "foo");
+    assert_eq!(d.text_between(4, 7), "bar");
+}
+
+#[test]
+fn test_utf16_emoji_and_cut() {
+    let text_with_emoji = Node::new_text("🎉hello", Vec::new());
+    // Emoji 🎉 is 2 UTF-16 code units, "hello" is 5 -> total node_size 7
+    assert_eq!(text_with_emoji.node_size(), 7);
+
+    // Slicing pos 2 to 7 should yield "hello"
+    let cut_node = text_with_emoji.cut(2, 7);
+    assert_eq!(cut_node.text().unwrap(), "hello");
+
+    // Slicing 0 to 2 should yield "🎉"
+    let emoji_cut = text_with_emoji.cut(0, 2);
+    assert_eq!(emoji_cut.text().unwrap(), "🎉");
+}
+
+#[test]
+fn test_node_after_before_text() {
+    let tagged = build_doc(|ctx| {
+        ctx.wrap_block("doc", |inner| {
+            vec![p(vec![text("hello")])(inner)]
+        })
+    });
+    let doc = tagged.node;
+    // Pos 3 is after "he" and before "llo"
+    let rpos = doc.resolve(3).expect("resolve pos 3");
+    assert_eq!(rpos.text_offset(), 2);
+    let after = rpos.node_after().expect("node after");
+    assert_eq!(after.text().unwrap(), "llo");
+    let before = rpos.node_before().expect("node before");
+    assert_eq!(before.text().unwrap(), "he");
+}
+
+#[test]
 fn test_golden_model_fixtures() {
     let json_str = include_str!("../fixtures/golden_fixtures.json");
     let val: serde_json::Value = serde_json::from_str(json_str).expect("parse json");

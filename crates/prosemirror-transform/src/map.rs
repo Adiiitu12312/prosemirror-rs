@@ -155,6 +155,18 @@ impl StepMap {
         MapResult::new(final_pos, 0, None)
     }
 
+    pub fn recover(&self, value: u64) -> usize {
+        let mut diff: isize = 0;
+        let index = (value & 0xffff) as usize;
+        let offset = (value >> 16) as usize;
+        if !self.inverted {
+            for i in 0..index {
+                diff += self.ranges[i * 3 + 2] as isize - self.ranges[i * 3 + 1] as isize;
+            }
+        }
+        (self.ranges[index * 3] as isize + diff + offset as isize).max(0) as usize
+    }
+
     pub fn invert(&self) -> Self {
         Self {
             ranges: self.ranges.clone(),
@@ -166,50 +178,115 @@ impl StepMap {
 #[derive(Clone, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Mapping {
     pub maps: Vec<StepMap>,
+    #[serde(default)]
+    pub mirror: Option<Vec<usize>>,
     pub from: usize,
+    pub to: usize,
 }
 
 impl Mapping {
     pub fn new() -> Self {
         Self {
             maps: Vec::new(),
+            mirror: None,
             from: 0,
+            to: 0,
         }
     }
 
-    pub fn append_map(&mut self, map: StepMap) {
+    pub fn append_map(&mut self, map: StepMap, mirrors: Option<usize>) {
         self.maps.push(map);
+        self.to = self.maps.len();
+        if let Some(m) = mirrors {
+            self.set_mirror(self.maps.len() - 1, m);
+        }
     }
 
-    pub fn map_result(&self, pos: usize, assoc: i32) -> MapResult {
-        let mut cur = MapResult::new(pos, 0, None);
-        for map in &self.maps[self.from..] {
-            let res = map.map_result(cur.pos, assoc);
-            cur.pos = res.pos;
-            if res.deleted() {
-                cur.del_info |= res.del_info;
+    pub fn set_mirror(&mut self, n: usize, m: usize) {
+        let mirror = self.mirror.get_or_insert_with(Vec::new);
+        mirror.push(n);
+        mirror.push(m);
+    }
+
+    pub fn get_mirror(&self, n: usize) -> Option<usize> {
+        if let Some(ref mirror) = self.mirror {
+            for i in 0..mirror.len() {
+                if mirror[i] == n {
+                    let other_idx = if i % 2 == 1 { i - 1 } else { i + 1 };
+                    return Some(mirror[other_idx]);
+                }
             }
         }
-        cur
+        None
     }
 
-    pub fn map(&self, pos: usize, assoc: i32) -> usize {
-        let mut p = pos;
-        for map in &self.maps[self.from..] {
-            p = map.map(p, assoc);
+    pub fn append_mapping(&mut self, mapping: &Mapping) {
+        let start_size = self.maps.len();
+        for i in 0..mapping.maps.len() {
+            let mirr = mapping.get_mirror(i);
+            let target_mirror = mirr.and_then(|m| if m < i { Some(start_size + m) } else { None });
+            self.append_map(mapping.maps[i].clone(), target_mirror);
         }
-        p
     }
 
-    pub fn slice(&self, from: usize, to: usize) -> Self {
-        Self {
-            maps: self.maps[from..to.min(self.maps.len())].to_vec(),
-            from: 0,
+    pub fn append_mapping_inverted(&mut self, mapping: &Mapping) {
+        let total_size = self.maps.len() + mapping.maps.len();
+        for i in (0..mapping.maps.len()).rev() {
+            let mirr = mapping.get_mirror(i);
+            let target_mirror = mirr.and_then(|m| if m > i { Some(total_size - m - 1) } else { None });
+            self.append_map(mapping.maps[i].invert(), target_mirror);
         }
     }
 
     pub fn invert(&self) -> Self {
-        let maps: Vec<StepMap> = self.maps.iter().rev().map(|m| m.invert()).collect();
-        Self { maps, from: 0 }
+        let mut inverse = Mapping::new();
+        inverse.append_mapping_inverted(self);
+        inverse
+    }
+
+    pub fn slice(&self, from: usize, to: usize) -> Self {
+        let end = to.min(self.maps.len());
+        Self {
+            maps: self.maps.clone(),
+            mirror: self.mirror.clone(),
+            from,
+            to: end,
+        }
+    }
+
+    pub fn map(&self, pos: usize, assoc: i32) -> usize {
+        self.map_internal(pos, assoc, true).pos
+    }
+
+    pub fn map_result(&self, pos: usize, assoc: i32) -> MapResult {
+        self.map_internal(pos, assoc, false)
+    }
+
+    fn map_internal(&self, mut pos: usize, assoc: i32, simple: bool) -> MapResult {
+        let mut del_info = 0;
+        let mut i = self.from;
+        let end = if self.to == 0 { self.maps.len() } else { self.to.min(self.maps.len()) };
+
+        while i < end {
+            let res = self.maps[i].map_result(pos, assoc);
+            if let Some(recover) = res.recover {
+                if let Some(corr) = self.get_mirror(i) {
+                    if corr > i && corr < end {
+                        i = corr + 1;
+                        pos = self.maps[corr].recover(recover);
+                        continue;
+                    }
+                }
+            }
+            del_info |= res.del_info;
+            pos = res.pos;
+            i += 1;
+        }
+
+        if simple {
+            MapResult::new(pos, 0, None)
+        } else {
+            MapResult::new(pos, del_info, None)
+        }
     }
 }

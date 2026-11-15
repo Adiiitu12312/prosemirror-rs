@@ -97,7 +97,7 @@ impl ImeHandler {
 
         let rpos = editor_state.doc.resolve(pos).ok()?;
         let parent = rpos.parent();
-        let text_before = parent.text_between(0, rpos.index(rpos.depth));
+        let text_before = parent.text_between(0, rpos.parent_offset);
         
         let clusters: Vec<&str> = text_before.graphemes(true).collect();
         if let Some(last_cluster) = clusters.last() {

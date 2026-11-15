@@ -4,6 +4,17 @@ use serde_json::Value;
 use crate::error::ModelError;
 use crate::mark::Mark;
 
+pub fn slice_utf16(s: &str, start_u16: usize, end_u16: usize) -> String {
+    let u16_units: Vec<u16> = s.encode_utf16().collect();
+    let start = start_u16.min(u16_units.len());
+    let end = end_u16.min(u16_units.len());
+    if start >= end {
+        String::new()
+    } else {
+        String::from_utf16_lossy(&u16_units[start..end])
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Node {
     inner: Arc<NodeInner>,
@@ -76,15 +87,28 @@ impl Fragment {
     }
 
     pub fn find_index(&self, pos: usize) -> (usize, usize) {
-        let mut cur = 0;
-        for (i, child) in self.children.iter().enumerate() {
-            let next = cur + child.node_size();
-            if next >= pos {
-                return (i, pos - cur);
-            }
-            cur = next;
+        self.find_index_round(pos, -1)
+    }
+
+    pub fn find_index_round(&self, pos: usize, round: i32) -> (usize, usize) {
+        if pos == 0 {
+            return (0, 0);
         }
-        (self.children.len(), pos - cur)
+        if pos >= self.size {
+            return (self.children.len(), self.size);
+        }
+        let mut cur_pos = 0;
+        for (i, child) in self.children.iter().enumerate() {
+            let end = cur_pos + child.node_size();
+            if end >= pos {
+                if end == pos || round > 0 {
+                    return (i + 1, end);
+                }
+                return (i, cur_pos);
+            }
+            cur_pos = end;
+        }
+        (self.children.len(), self.size)
     }
 
     pub fn cut(&self, from: usize, to: usize) -> Self {
@@ -102,8 +126,7 @@ impl Fragment {
                     result.push(child.clone());
                 } else if child.is_text() {
                     let text = child.text().unwrap_or("");
-                    let chars: Vec<char> = text.chars().collect();
-                    let sliced: String = chars[start_offset..end_offset].iter().collect();
+                    let sliced = slice_utf16(text, start_offset, end_offset);
                     if !sliced.is_empty() {
                         result.push(Node::new_text(sliced, child.marks().to_vec()));
                     }
@@ -222,6 +245,21 @@ impl Node {
         }
     }
 
+    pub fn cut(&self, from: usize, to: usize) -> Self {
+        if from == 0 && to == self.node_size() {
+            return self.clone();
+        }
+        if self.is_text() {
+            let text = self.text().unwrap_or("");
+            let sliced = slice_utf16(text, from, to);
+            Node::new_text(sliced, self.marks().to_vec())
+        } else {
+            let inner_from = if from > 0 { from - 1 } else { 0 };
+            let inner_to = if to < self.node_size() { to - 1 } else { self.content().size() };
+            self.copy(Some(self.content().cut(inner_from, inner_to)))
+        }
+    }
+
     pub fn same_markup(&self, other: &Node) -> bool {
         self.type_name() == other.type_name()
             && self.attrs() == other.attrs()
@@ -233,12 +271,7 @@ impl Node {
         let mut cur = 0;
         if self.is_text() {
             if let Some(t) = self.text() {
-                let chars: Vec<char> = t.chars().collect();
-                let start = from.min(chars.len());
-                let end = to.min(chars.len());
-                if start < end {
-                    result.push_str(&chars[start..end].iter().collect::<String>());
-                }
+                result.push_str(&slice_utf16(t, from, to));
             }
             return result;
         }

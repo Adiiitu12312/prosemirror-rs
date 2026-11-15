@@ -204,7 +204,7 @@ pub fn chain_commands<'a>(
     move |state: &EditorState, mut dispatch: DispatchFn| {
         for cmd in &commands {
             if let Some(ref mut d) = dispatch {
-                if cmd(state, Some(*d)) {
+                if cmd(state, Some(&mut **d)) {
                     return true;
                 }
             } else if cmd(state, None) {

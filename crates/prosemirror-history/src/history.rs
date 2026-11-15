@@ -35,15 +35,13 @@ impl StateField for HistoryField {
     }
 
     fn apply(&self, tr: &Transaction, value: &Value) -> Value {
-        let mut history: HistoryState = serde_json::from_value(value.clone()).unwrap_or_default();
-        let meta_action = tr.get_meta(HISTORY_KEY).and_then(|v| v.as_str());
-
-        if meta_action == Some("undo") {
-            // Steps applied during undo were pushed into undone in the undo command
-            return serde_json::to_value(history).unwrap();
-        } else if meta_action == Some("redo") {
-            return serde_json::to_value(history).unwrap();
+        if let Some(meta_val) = tr.get_meta(HISTORY_KEY) {
+            if let Ok(new_hist) = serde_json::from_value::<HistoryState>(meta_val.clone()) {
+                return serde_json::to_value(new_hist).unwrap();
+            }
         }
+
+        let mut history: HistoryState = serde_json::from_value(value.clone()).unwrap_or_default();
 
         if !tr.doc_changed() {
             return value.clone();
@@ -52,8 +50,8 @@ impl StateField for HistoryField {
         // Normal document change: clear redo stack, push to done stack
         history.undone.clear();
 
-        let doc_before = &tr.transform.docs.first().unwrap_or(tr.doc());
-        for step in tr.steps() {
+        for (i, step) in tr.steps().iter().enumerate() {
+            let doc_before = tr.transform.docs.get(i).unwrap_or(tr.doc());
             let inverted = step.invert(doc_before);
             history.done.push(HistoryItem {
                 step: step.clone(),
@@ -94,15 +92,14 @@ pub fn undo(state: &EditorState, mut dispatch: impl FnMut(Transaction)) -> bool 
     let mut tr = state.tr();
     let _ = tr.step(item.inverted.clone());
     tr.set_selection(item.selection.clone());
-    tr.set_meta(HISTORY_KEY, serde_json::Value::String("undo".to_string()));
 
-    // Record into undone stack
     let redo_item = HistoryItem {
         step: item.inverted,
         inverted: item.step,
         selection: state.selection.clone(),
     };
     history.undone.push(redo_item);
+    tr.set_meta(HISTORY_KEY, serde_json::to_value(&history).unwrap());
 
     dispatch(tr);
     true
@@ -126,7 +123,6 @@ pub fn redo(state: &EditorState, mut dispatch: impl FnMut(Transaction)) -> bool 
     let mut tr = state.tr();
     let _ = tr.step(item.inverted.clone());
     tr.set_selection(item.selection.clone());
-    tr.set_meta(HISTORY_KEY, serde_json::Value::String("redo".to_string()));
 
     let undo_item = HistoryItem {
         step: item.inverted,
@@ -134,6 +130,7 @@ pub fn redo(state: &EditorState, mut dispatch: impl FnMut(Transaction)) -> bool 
         selection: state.selection.clone(),
     };
     history.done.push(undo_item);
+    tr.set_meta(HISTORY_KEY, serde_json::to_value(&history).unwrap());
 
     dispatch(tr);
     true

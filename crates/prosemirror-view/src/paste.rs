@@ -1,4 +1,4 @@
-use prosemirror_model::{Fragment, Mark, Node, Schema, Slice};
+use prosemirror_model::{Fragment, Node, Schema, Slice};
 
 pub struct GoogleDocsParser;
 
@@ -8,61 +8,113 @@ impl GoogleDocsParser {
     }
 
     pub fn parse_clipboard_html(html: &str, schema: &Schema) -> Slice {
-        let is_docs = Self::is_google_docs_html(html);
+        let chunks = parse_styled_chunks(html);
 
-        // Extract text and inline formatting
-        let mut blocks = Vec::new();
-        let cleaned = clean_html(html);
-
-        for line in cleaned.lines() {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
+        let mut inline_nodes = Vec::new();
+        for (text, is_bold, is_italic) in chunks {
+            if text.is_empty() {
                 continue;
             }
-
             let mut marks = Vec::new();
-            if is_docs {
-                if html.contains("font-weight:700") || html.contains("font-weight: 700") || html.contains("<b>") {
-                    if let Some(m) = schema.mark_type("strong") {
-                        marks.push(m.create(None));
-                    }
-                }
-                if html.contains("font-style:italic") || html.contains("font-style: italic") || html.contains("<i>") {
-                    if let Some(m) = schema.mark_type("em") {
-                        marks.push(m.create(None));
-                    }
+            if is_bold {
+                if let Some(m) = schema.mark_type("strong") {
+                    marks.push(m.create(None));
                 }
             }
+            if is_italic {
+                if let Some(m) = schema.mark_type("em") {
+                    marks.push(m.create(None));
+                }
+            }
+            inline_nodes.push(Node::new_text(text, marks));
+        }
 
-            let text_node = Node::new_text(trimmed, marks);
-            let paragraph = schema.node(
+        if inline_nodes.is_empty() {
+            return Slice::empty();
+        }
+
+        let paragraph = schema
+            .node(
                 "paragraph",
                 None,
-                Some(Fragment::from_nodes(vec![text_node])),
+                Some(Fragment::from_nodes(inline_nodes)),
                 None,
-            ).unwrap();
-            blocks.push(paragraph);
-        }
+            )
+            .unwrap();
 
-        if blocks.is_empty() {
-            Slice::empty()
-        } else {
-            Slice::new(Fragment::from_nodes(blocks), 1, 1)
-        }
+        Slice::new(Fragment::from_nodes(vec![paragraph]), 1, 1)
     }
 }
 
-fn clean_html(html: &str) -> String {
-    let mut text = String::new();
-    let mut in_tag = false;
-    for ch in html.chars() {
+fn parse_styled_chunks(html: &str) -> Vec<(String, bool, bool)> {
+    let mut chunks = Vec::new();
+    let mut cur_text = String::new();
+    let mut style_stack: Vec<(bool, bool)> = vec![(false, false)];
+
+    let mut chars = html.chars().peekable();
+    while let Some(ch) = chars.next() {
         if ch == '<' {
-            in_tag = true;
-        } else if ch == '>' {
-            in_tag = false;
-        } else if !in_tag {
-            text.push(ch);
+            let mut tag = String::new();
+            for inner in chars.by_ref() {
+                if inner == '>' {
+                    break;
+                }
+                tag.push(inner);
+            }
+
+            let tag_lower = tag.to_lowercase();
+            let is_closing = tag_lower.starts_with('/');
+
+            if is_closing {
+                if !cur_text.is_empty() {
+                    let &(bold, italic) = style_stack.last().unwrap_or(&(false, false));
+                    chunks.push((cur_text.clone(), bold, italic));
+                    cur_text.clear();
+                }
+                if style_stack.len() > 1 {
+                    style_stack.pop();
+                }
+            } else {
+                if !cur_text.is_empty() {
+                    let &(bold, italic) = style_stack.last().unwrap_or(&(false, false));
+                    chunks.push((cur_text.clone(), bold, italic));
+                    cur_text.clear();
+                }
+
+                let parent_style = *style_stack.last().unwrap_or(&(false, false));
+                let mut bold = parent_style.0;
+                let mut italic = parent_style.1;
+
+                if tag_lower.starts_with("b ") || tag_lower == "b" || tag_lower.starts_with("strong") {
+                    bold = true;
+                }
+                if tag_lower.starts_with("i ") || tag_lower == "i" || tag_lower.starts_with("em") {
+                    italic = true;
+                }
+                if tag_lower.contains("font-weight:700") || tag_lower.contains("font-weight: 700") || tag_lower.contains("font-weight:bold") {
+                    bold = true;
+                }
+                if tag_lower.contains("font-weight:normal") || tag_lower.contains("font-weight: 400") {
+                    bold = false;
+                }
+                if tag_lower.contains("font-style:italic") || tag_lower.contains("font-style: italic") {
+                    italic = true;
+                }
+
+                style_stack.push((bold, italic));
+            }
+        } else {
+            cur_text.push(ch);
         }
     }
-    text
+
+    if !cur_text.is_empty() {
+        let &(bold, italic) = style_stack.last().unwrap_or(&(false, false));
+        let trimmed = cur_text.trim();
+        if !trimmed.is_empty() {
+            chunks.push((trimmed.to_string(), bold, italic));
+        }
+    }
+
+    chunks
 }

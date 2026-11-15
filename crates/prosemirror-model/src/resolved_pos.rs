@@ -132,11 +132,11 @@ impl ResolvedPos {
             return None;
         }
         let d_off = self.text_offset();
-        let child = parent.child(idx).clone();
+        let child = parent.child(idx);
         if d_off > 0 {
-            Some(child.copy(Some(child.content().cut(d_off, child.node_size()))))
+            Some(child.cut(d_off, child.node_size()))
         } else {
-            Some(child)
+            Some(child.clone())
         }
     }
 
@@ -145,14 +145,23 @@ impl ResolvedPos {
         let idx = self.index(self.depth);
         let d_off = self.text_offset();
         if d_off > 0 && idx < parent.child_count() {
-            let child = parent.child(idx).clone();
-            return Some(child.copy(Some(child.content().cut(0, d_off))));
+            let child = parent.child(idx);
+            return Some(child.cut(0, d_off));
         }
         if idx > 0 {
             Some(parent.child(idx - 1).clone())
         } else {
             None
         }
+    }
+
+    pub fn shared_depth(&self, pos: usize) -> usize {
+        for depth in (1..=self.depth).rev() {
+            if self.start(depth) <= pos && self.end(depth) >= pos {
+                return depth;
+            }
+        }
+        0
     }
 
     pub fn marks(&self) -> Vec<Mark> {

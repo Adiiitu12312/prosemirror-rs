@@ -12,6 +12,8 @@ pub enum ModelError {
     InvalidContent(String),
     #[error("Invalid slice open depths: start {0}, end {1}")]
     InvalidSlice(usize, usize),
+    #[error("Replace error: {0}")]
+    ReplaceError(String),
     #[error("Serialization error: {0}")]
     Serialization(String),
 }

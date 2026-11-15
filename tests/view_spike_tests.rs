@@ -8,7 +8,7 @@ use prosemirror_view::{
 #[test]
 fn test_spike_hindi_gboard_conjuncts() {
     let handler = ImeHandler::new();
-    // Devanagari text: "नमस्ते" = न + म + स + ् + त + े (6 code points, 3 grapheme clusters)
+    // Devanagari text: "नमस्ते" = न + म + स + ् + त + े (6 UTF-16 code units, 3 grapheme clusters)
     let doc = build_doc(|ctx| {
         ctx.wrap_block("doc", |inner| {
             vec![p(vec![text("नमस्ते")])(inner)]
@@ -18,7 +18,7 @@ fn test_spike_hindi_gboard_conjuncts() {
     let state = EditorState::create(EditorStateConfig {
         schema: test_schema().clone(),
         doc: Some(doc),
-        selection: Some(Selection::cursor(19)), // End of word
+        selection: Some(Selection::cursor(7)), // End of word (1 open tag + 6 UTF-16 units)
         stored_marks: None,
         plugins: Vec::new(),
     });
@@ -26,6 +26,8 @@ fn test_spike_hindi_gboard_conjuncts() {
     // Backspace should delete the full extended grapheme cluster ("स्ते"), not leave an isolated virama
     let tr = handler.delete_previous_grapheme_cluster(&state);
     assert!(tr.is_some(), "Gboard grapheme cluster deletion must succeed");
+    let next_state = state.apply(&tr.unwrap());
+    assert_eq!(next_state.doc.text_between(1, 3), "नम");
 }
 
 #[test]

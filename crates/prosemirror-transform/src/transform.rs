@@ -24,7 +24,7 @@ impl Transform {
         match step.apply(&self.doc) {
             StepResult::Ok(new_doc) => {
                 self.docs.push(self.doc.clone());
-                self.mapping.append_map(step.get_map());
+                self.mapping.append_map(step.get_map(), None);
                 self.steps.push(step);
                 self.doc = new_doc;
                 Ok(())

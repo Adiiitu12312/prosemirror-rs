@@ -54,9 +54,10 @@ impl ViewLayout {
                     let mut cluster_pos = doc_pos;
                     for ch in text.chars() {
                         let w = char_width;
+                        let u16_len = ch.len_utf16();
                         clusters.push(GlyphCluster {
                             pos: cluster_pos,
-                            len: 1,
+                            len: u16_len,
                             rect: LayoutRect {
                                 x: cur_x,
                                 y: cur_y,
@@ -66,7 +67,7 @@ impl ViewLayout {
                             text: ch.to_string(),
                         });
                         cur_x += w;
-                        cluster_pos += 1;
+                        cluster_pos += u16_len;
                     }
                     doc_pos += inline_node.node_size();
                 }
