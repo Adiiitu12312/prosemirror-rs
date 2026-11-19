@@ -1,6 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 mod benchmark;
+mod block_index;
 mod desktop;
 mod replay;
 mod setup;
@@ -33,12 +34,19 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             editor.handle(Event::Focus)?;
             editor.host().save_png(Path::new(path))
         }
-        [flag, host] if flag == OsStr::new("--bench") && host == OsStr::new("core") => {
-            benchmark::run_core()
+        [flag, host, rest @ ..] if flag == OsStr::new("--bench") && rest.len() <= 1 => {
+            let blocks = match rest.first() {
+                None => 5_000,
+                Some(value) => value.to_str().and_then(|text| text.parse::<usize>().ok())
+                    .filter(|blocks| (1..=50_000).contains(blocks))
+                    .ok_or("benchmark blocks must be in 1..=50000")?,
+            };
+            match host.to_str() {
+                Some("core") => benchmark::run_core(blocks),
+                Some("surface") => benchmark::run_surface(blocks),
+                _ => Err("benchmark host must be core or surface".into()),
+            }
         }
-        [flag, host] if flag == OsStr::new("--bench") && host == OsStr::new("surface") => {
-            benchmark::run_surface()
-        }
-        _ => Err("usage: editor-app [--replay INPUT [--png OUTPUT] | --snapshot PNG | --bench core|surface]".into()),
+        _ => Err("usage: editor-app [--replay INPUT [--png OUTPUT] | --snapshot PNG | --bench core|surface [BLOCKS]]".into()),
     }
 }

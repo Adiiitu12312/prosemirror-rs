@@ -635,18 +635,23 @@ impl Layout for DesktopHost {
     fn block_bounds(&self, pos: usize) -> Option<Rect> { self.surface.block_bounds(pos) }
     fn composition_caret(&self, composition: &CompositionDisplay) -> Option<Rect> { self.surface.composition_caret(composition) }
     fn selection_rects(&self, from: usize, to: usize) -> Vec<Rect> { self.surface.selection_rects(from, to) }
+    fn viewport_selection_rects(&self, from: usize, to: usize) -> Vec<Rect> {
+        self.surface.viewport_selection_rects(from, to)
+    }
 }
 
 impl Host for DesktopHost {
+    fn incremental_display_list(&self) -> bool { true }
+
     fn update_layout(&mut self, frame: &DisplayList, changed: &BlockUpdate) {
         self.surface.update_layout(frame, changed);
     }
 
     fn draw(&mut self, frame: &DisplayList, changed: &BlockUpdate) {
         let ghost = self.ghost_at.zip(frame.drag.as_ref()).and_then(|(at, drag)| {
-            let block = frame.node_at(drag.source)?;
-            let label = block.node.text_content().chars().take(38).collect::<String>();
-            let label = if label.is_empty() { block.node.type_name().into() } else { label };
+            let block = self.surface.document_node_at(drag.source)?;
+            let label = block.text_content().chars().take(38).collect::<String>();
+            let label = if label.is_empty() { block.type_name().into() } else { label };
             Some((Point { x: at.x + 12.0, y: at.y + 14.0 }, label))
         });
         self.surface.set_drag_feedback(None, ghost);
@@ -675,6 +680,7 @@ impl Host for DesktopHost {
     fn viewport(&self) -> Option<Rect> { self.surface.viewport() }
     fn scroll_by(&mut self, delta: Point) { self.surface.scroll_by(delta); }
     fn update_accessibility(&mut self, update: &AccessibilityTreeUpdate) { self.surface.update_accessibility(update); }
+    fn update_accessibility_state(&mut self, state: &prosemirror_state::EditorState) { self.surface.update_accessibility_state(state); }
 }
 
 #[cfg(test)]

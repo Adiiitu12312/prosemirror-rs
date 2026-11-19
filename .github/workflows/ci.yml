@@ -79,16 +79,21 @@ jobs:
           if-no-files-found: error
 
       - name: Measure native editor workloads
-        if: matrix.os == 'ubuntu-latest' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
+        if: matrix.os == 'ubuntu-latest'
         shell: bash
         run: |
           set -o pipefail
           cargo build --release --bin editor-app
-          target/release/editor-app --bench core | tee editor-benchmarks.jsonl
-          target/release/editor-app --bench surface | tee -a editor-benchmarks.jsonl
+          for trial in 1 2 3; do
+            for blocks in 5000 10000 50000; do
+              for host in core surface; do
+                target/release/editor-app --bench "$host" "$blocks"
+              done
+            done
+          done | tee editor-benchmarks.jsonl
 
       - name: Save editor benchmark measurements
-        if: matrix.os == 'ubuntu-latest' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
+        if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v4
         with:
           name: editor-benchmarks

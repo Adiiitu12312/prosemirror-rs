@@ -1,5 +1,6 @@
 //! CPU rendering and document geometry for the native editor example.
 
+use std::cell::{Cell, OnceCell, RefCell};
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::ops::Range;
@@ -8,13 +9,18 @@ use std::path::Path;
 use cosmic_text::{Attrs, BidiParagraphs, Buffer, Color, Family, FontSystem, Metrics, PhysicalGlyph, Shaping, Style, SwashCache, Weight};
 use prosemirror_editor::{
     BlockUpdate, ClipboardContent, CompositionDisplay, CursorIcon, DisplayItem, DisplayList, DisplayNode,
-    Host, Layout, LineBox, Point, PositionAtCoords, Rect, SelectionKind,
+    Host, Layout, LineBox, Point, PositionAtCoords, Rect, SelectionKind, accessibility_tree,
 };
-use prosemirror_model::{table_map::TableMap, Mark};
+use prosemirror_model::{table_map::TableMap, Mark, Node};
+use prosemirror_state::EditorState;
 use prosemirror_view::{AccessibilityTreeUpdate, Decoration, DecorationType};
 use unicode_segmentation::UnicodeSegmentation;
 
+use crate::block_index::{BlockIndex, Extent};
+
 const PAGE_INSET: f64 = 24.0;
+const BLOCK_GAP: f64 = 10.0;
+const EAGER_BLOCKS: usize = 128;
 const PAPER: Color = Color::rgb(251, 252, 254);
 const INK: Color = Color::rgb(29, 39, 54);
 const MUTED: Color = Color::rgb(92, 107, 125);
@@ -39,19 +45,20 @@ pub struct SurfaceHost {
     width: u32,
     height: u32,
     pixels: Vec<u32>,
-    fonts: FontSystem,
+    fonts: RefCell<FontSystem>,
     raster: SwashCache,
     cached_width: u32,
     blocks: Vec<PlacedBlock>,
+    index: RefCell<BlockIndex>,
     scroll: Point,
-    content_width: f64,
-    content_height: f64,
+    content_width: Cell<f64>,
     document_size: usize,
     clipboard: Option<ClipboardContent>,
     candidate: Option<Rect>,
     cursor: CursorIcon,
     focus_requested: bool,
-    accessibility: Option<AccessibilityTreeUpdate>,
+    accessibility_state: Option<EditorState>,
+    accessibility: OnceCell<AccessibilityTreeUpdate>,
     drop_line: Option<Rect>,
     drag_ghost: Option<(Point, String)>,
     touch_handles: Vec<Rect>,
@@ -89,19 +96,20 @@ impl SurfaceHost {
             width: 0,
             height: 0,
             pixels: Vec::new(),
-            fonts,
+            fonts: RefCell::new(fonts),
             raster: SwashCache::new(),
             cached_width: 0,
             blocks: Vec::new(),
+            index: RefCell::new(BlockIndex::default()),
             scroll: Point::default(),
-            content_width: 0.0,
-            content_height: 0.0,
+            content_width: Cell::new(0.0),
             document_size: 0,
             clipboard: None,
             candidate: None,
             cursor: CursorIcon::Text,
             focus_requested: false,
-            accessibility: None,
+            accessibility_state: None,
+            accessibility: OnceCell::new(),
             drop_line: None,
             drag_ghost: None,
             touch_handles: Vec::new(),
@@ -168,7 +176,8 @@ impl SurfaceHost {
     }
 
     pub fn accessibility(&self) -> Option<&AccessibilityTreeUpdate> {
-        self.accessibility.as_ref()
+        self.accessibility.get().or_else(|| self.accessibility_state.as_ref()
+            .map(|state| self.accessibility.get_or_init(|| accessibility_tree(state))))
     }
 
     /// Position transient drag graphics in document coordinates.
@@ -183,60 +192,99 @@ impl SurfaceHost {
     }
 
     fn limit_scroll(&mut self) {
-        self.scroll.x = self.scroll.x.clamp(0.0, (self.content_width - f64::from(self.width)).max(0.0));
-        self.scroll.y = self.scroll.y.clamp(0.0, (self.content_height - f64::from(self.height)).max(0.0));
+        self.scroll.x = self.scroll.x.clamp(0.0, (self.content_width.get() - f64::from(self.width)).max(0.0));
+        let total_height = self.index.borrow().before(self.blocks.len()).height + PAGE_INSET * 2.0;
+        self.scroll.y = self.scroll.y.clamp(0.0, (total_height - f64::from(self.height)).max(0.0));
     }
 
     fn prepare_layout(&mut self, frame: &DisplayList, changed: &BlockUpdate) {
         let regenerate = self.cached_width != self.width;
         self.cached_width = self.width;
         self.document_size = frame.document_size;
-        let mut previous = std::mem::take(&mut self.blocks).into_iter().map(Some).collect::<Vec<_>>();
-        let mut y = PAGE_INSET;
-        let width = (f64::from(self.width) - PAGE_INSET * 2.0).max(20.0);
-        self.blocks.reserve(frame.blocks.len());
-        self.content_width = 0.0;
-        for (index, block) in frame.blocks.iter().enumerate() {
-            let composition = frame.composition.as_ref().filter(|item| {
-                block.content_from <= item.from && item.to <= block.content_to
-            }).map(|item| CompositionDisplay {
-                from: item.from - block.from,
-                to: item.to - block.from,
-                text: item.text.clone(),
-                selection: item.selection.clone(),
-            });
-            let previous_index = if index < changed.current.start {
-                Some(index)
-            } else if index >= changed.current.end {
-                Some(changed.previous.end + (index - changed.current.end))
-            } else {
-                None
-            };
-            let prior = previous_index.and_then(|i| previous.get_mut(i)).and_then(Option::take);
-            let block = match prior {
-                Some(mut prior) if !regenerate && prior.composition == composition
-                    && same_display_node(&prior.source, block, prior.source.from, block.from) => {
-                    prior.origin_y = y;
-                    if prior.source.from != block.from {
-                        prior.source = block.clone();
-                    }
-                    prior
+        if let Some(range) = &frame.block_range {
+            for (index, source) in range.clone().zip(&frame.blocks) {
+                let old = &self.blocks[index];
+                let extent = old.extent();
+                let block = PlacedBlock::new(source, frame.composition.as_ref(), extent.height - BLOCK_GAP);
+                self.index.get_mut().replace(index, extent, block.extent());
+                self.blocks[index] = block;
+            }
+        } else {
+            let mut previous = std::mem::take(&mut self.blocks).into_iter().map(Some).collect::<Vec<_>>();
+            self.blocks.reserve(frame.blocks.len());
+            for (index, block) in frame.blocks.iter().enumerate() {
+                let previous_index = if index < changed.current.start {
+                    Some(index)
+                } else if index >= changed.current.end {
+                    Some(changed.previous.end + (index - changed.current.end))
+                } else {
+                    None
+                };
+                let prior = previous_index.and_then(|i| previous.get_mut(i)).and_then(Option::take);
+                let mut next = PlacedBlock::new(block, frame.composition.as_ref(), 24.0);
+                if let Some(prior) = prior.filter(|prior| !regenerate && prior.composition == next.composition
+                    && same_display_node(&prior.source, block, prior.source.from, block.from))
+                {
+                    next.measured = prior.measured;
+                    next.estimate = prior.estimate;
                 }
-                _ => {
-                    let mut shaper = Shaper { fonts: &mut self.fonts, base: block.from, composition: composition.as_ref() };
-                    let mut scene = Scene::default();
-                    let height = shaper.layout_node(block, PAGE_INSET, 0.0, width, &mut scene);
-                    PlacedBlock { source: block.clone(), composition, origin_y: y, height, scene }
-                }
-            };
-            self.content_width = self.content_width.max(
-                block.scene.nodes.iter().map(|node| node.rect.right + PAGE_INSET).fold(0.0, f64::max),
-            );
-            y += block.height + 10.0;
-            self.blocks.push(block);
+                self.blocks.push(next);
+            }
+            self.index.get_mut().reset(self.blocks.iter().map(PlacedBlock::extent));
+            self.content_width.set(self.blocks.iter().filter_map(|block| block.measured.get().map(|m| m.width))
+                .fold(f64::from(self.width), f64::max));
         }
-        self.content_height = y + PAGE_INSET;
+        if self.blocks.len() <= EAGER_BLOCKS {
+            for index in 0..self.blocks.len() {
+                self.measure_block(index);
+            }
+        }
         self.limit_scroll();
+        self.measure_viewport();
+    }
+
+    fn measure_block(&self, index: usize) -> &MeasuredBlock {
+        let block = &self.blocks[index];
+        block.measured.get_or_init(|| {
+            let mut fonts = self.fonts.borrow_mut();
+            let mut shaper = Shaper { fonts: &mut fonts, base: block.source.from, composition: block.composition.as_ref() };
+            let mut scene = Scene::default();
+            let available = (f64::from(self.width) - PAGE_INSET * 2.0).max(20.0);
+            let height = shaper.layout_node(&block.source, PAGE_INSET, 0.0, available, &mut scene);
+            let width = scene.nodes.iter().map(|node| node.rect.right + PAGE_INSET).fold(0.0, f64::max);
+            self.content_width.set(self.content_width.get().max(width));
+            self.index.borrow_mut().replace(index, block.extent(), Extent {
+                units: block.source.to - block.source.from, height: height + BLOCK_GAP,
+            });
+            MeasuredBlock { scene, height, width }
+        })
+    }
+
+    fn measure_viewport(&self) -> Range<usize> {
+        let start = self.block_at_y(self.scroll.y);
+        let bottom = self.scroll.y + f64::from(self.height);
+        let mut end = start;
+        while end < self.blocks.len() && self.origin(end) < bottom {
+            self.measure_block(end);
+            end += 1;
+        }
+        start..end
+    }
+
+    fn block_at_y(&self, y: f64) -> usize {
+        self.index.borrow().find(|sum| PAGE_INSET + sum.height <= y)
+    }
+
+    fn origin(&self, index: usize) -> f64 {
+        PAGE_INSET + self.index.borrow().before(index).height
+    }
+
+    fn position(&self, index: usize) -> usize {
+        self.index.borrow().before(index).units
+    }
+
+    fn block_at_pos(&self, pos: usize) -> usize {
+        self.index.borrow().find(|sum| sum.units < pos)
     }
 }
 
@@ -256,8 +304,32 @@ fn bundled_fonts(system_fallback: bool) -> FontSystem {
 struct PlacedBlock {
     source: DisplayNode,
     composition: Option<CompositionDisplay>,
-    origin_y: f64,
+    estimate: f64,
+    measured: OnceCell<MeasuredBlock>,
+}
+
+impl PlacedBlock {
+    fn new(source: &DisplayNode, composition: Option<&CompositionDisplay>, estimate: f64) -> Self {
+        let composition = composition.filter(|item| {
+            source.content_from <= item.from && item.to <= source.content_to
+        }).map(|item| CompositionDisplay {
+            from: item.from - source.from,
+            to: item.to - source.from,
+            text: item.text.clone(),
+            selection: item.selection.clone(),
+        });
+        Self { source: source.clone(), composition, estimate, measured: OnceCell::new() }
+    }
+
+    fn extent(&self) -> Extent {
+        let height = self.measured.get().map_or(self.estimate, |block| block.height);
+        Extent { units: self.source.to - self.source.from, height: height + BLOCK_GAP }
+    }
+}
+
+struct MeasuredBlock {
     height: f64,
+    width: f64,
     scene: Scene,
 }
 
@@ -852,9 +924,25 @@ fn shape_buffer(
 }
 
 impl SurfaceHost {
-    fn blocks_at_pos(&self, pos: usize) -> impl Iterator<Item = &PlacedBlock> {
-        let first = self.blocks.partition_point(|block| block.source.to < pos);
-        self.blocks[first..].iter().take_while(move |block| block.source.from <= pos)
+    fn positioned_block(&self, index: usize) -> PositionedBlock<'_> {
+        let block = self.measure_block(index);
+        PositionedBlock { from: self.position(index), origin_y: self.origin(index), scene: &block.scene }
+    }
+
+    fn blocks_at_pos(&self, pos: usize) -> impl Iterator<Item = PositionedBlock<'_>> {
+        self.blocks_in_range(pos, pos)
+    }
+
+    fn blocks_in_range(&self, from: usize, to: usize) -> impl Iterator<Item = PositionedBlock<'_>> {
+        (self.block_at_pos(from)..self.blocks.len()).take_while(move |&index| self.position(index) <= to)
+            .map(|index| self.positioned_block(index))
+    }
+
+    pub(super) fn document_node_at(&self, pos: usize) -> Option<&Node> {
+        let index = self.index.borrow().find(|sum| sum.units <= pos);
+        let block = &self.blocks.get(index)?.source.node;
+        let offset = pos - self.position(index);
+        if offset == 0 { Some(block) } else { block.node_at(offset - 1) }
     }
 
     fn widget_art(
@@ -888,6 +976,13 @@ impl SurfaceHost {
     }
 }
 
+#[derive(Clone, Copy)]
+struct PositionedBlock<'a> {
+    from: usize,
+    origin_y: f64,
+    scene: &'a Scene,
+}
+
 impl Layout for SurfaceHost {
     fn coords_at_pos(&self, pos: usize, side: i32) -> Option<Rect> {
         if pos > self.document_size {
@@ -897,7 +992,7 @@ impl Layout for SurfaceHost {
         let mut alternate = None;
         let mut fallback = None;
         for block in self.blocks_at_pos(pos) {
-            let local = pos - block.source.from;
+            let local = pos - block.from;
             for line in &block.scene.lines {
                 if local < line.from || local > line.to {
                     continue;
@@ -945,10 +1040,14 @@ impl Layout for SurfaceHost {
             return Some(PositionAtCoords { pos: 0, inside: None });
         }
 
-        let index = self.blocks.partition_point(|block| block.origin_y + block.height < point.y);
+        let index = self.block_at_y(point.y);
+        let index = if index < self.blocks.len()
+            && self.origin(index) + self.measure_block(index).height < point.y
+        { index + 1 } else { index };
         let start = index.saturating_sub(1);
         let stop = (index + 2).min(self.blocks.len());
-        let candidates = &self.blocks[start..stop];
+        for index in start..stop { self.measure_block(index); }
+        let candidates: Vec<_> = (start..stop).map(|index| self.positioned_block(index)).collect();
         let line = candidates.iter().flat_map(|block| {
             block.scene.lines.iter().map(move |line| (block, line))
         }).min_by(|(left, a), (right, b)| {
@@ -968,8 +1067,8 @@ impl Layout for SurfaceHost {
                 let is_inline = bounds.height() > 16.0 && node.to - node.from == 1;
                 let first_half = if is_inline { point.x < bounds.center().x } else { point.y < bounds.center().y };
                 return Some(PositionAtCoords {
-                    pos: block.source.from + if first_half { node.from } else { node.to },
-                    inside: Some(block.source.from + node.from),
+                    pos: block.from + if first_half { node.from } else { node.to },
+                    inside: Some(block.from + node.from),
                 });
             }
         }
@@ -980,22 +1079,22 @@ impl Layout for SurfaceHost {
                 let start = (point.x < cluster.rect.center().x) ^ cluster.rtl;
                 if start { cluster.model.start } else { cluster.model.end }
             });
-            let inside = bounds.map_or(block.source.from + line.inside, |(block, node, _)| block.source.from + node.from);
-            return Some(PositionAtCoords { pos: block.source.from + local, inside: Some(inside) });
+            let inside = bounds.map_or(block.from + line.inside, |(block, node, _)| block.from + node.from);
+            return Some(PositionAtCoords { pos: block.from + local, inside: Some(inside) });
         }
-        let first = self.blocks.first()?;
-        let last = self.blocks.last()?;
         Some(PositionAtCoords {
-            pos: if point.y < f64::midpoint(first.origin_y, last.origin_y + last.height) { 0 } else { self.document_size },
+            pos: if point.y < f64::midpoint(PAGE_INSET, self.origin(self.blocks.len()) - BLOCK_GAP) {
+                0
+            } else { self.document_size },
             inside: None,
         })
     }
 
     fn line_boxes(&self, from: usize, to: usize) -> Vec<LineBox> {
-        self.blocks.iter().filter(|block| block.source.to >= from && block.source.from <= to)
+        self.blocks_in_range(from, to)
             .flat_map(|block| block.scene.lines.iter().filter_map(move |line| {
-                let start = block.source.from + line.from;
-                let end = block.source.from + line.to;
+                let start = block.from + line.from;
+                let end = block.from + line.to;
                 (start <= to && end >= from).then_some(LineBox {
                     from: start, to: end, rect: translate(line.rect, 0.0, block.origin_y),
                 })
@@ -1004,7 +1103,7 @@ impl Layout for SurfaceHost {
 
     fn block_bounds(&self, pos: usize) -> Option<Rect> {
         self.blocks_at_pos(pos).find_map(|block| {
-            block.scene.nodes.iter().find(|node| node.from == pos - block.source.from)
+            block.scene.nodes.iter().find(|node| node.from == pos - block.from)
                 .map(|node| translate(node.rect, 0.0, block.origin_y))
         })
     }
@@ -1031,8 +1130,8 @@ impl Layout for SurfaceHost {
             return Vec::new();
         }
         let mut rectangles = Vec::new();
-        for block in self.blocks.iter().filter(|block| block.source.to > from && block.source.from < to) {
-            let base = block.source.from;
+        for block in self.blocks_in_range(from, to) {
+            let base = block.from;
             for line in &block.scene.lines {
                 let mut visible = line.clusters.iter().filter(|cluster| {
                     base + cluster.model.start < to && base + cluster.model.end > from
@@ -1053,9 +1152,16 @@ impl Layout for SurfaceHost {
         }
         rectangles
     }
+
+    fn viewport_selection_rects(&self, from: usize, to: usize) -> Vec<Rect> {
+        let viewport = self.measure_viewport();
+        self.selection_rects(from.max(self.position(viewport.start)), to.min(self.position(viewport.end)))
+    }
 }
 
 impl Host for SurfaceHost {
+    fn incremental_display_list(&self) -> bool { true }
+
     fn update_layout(&mut self, frame: &DisplayList, changed: &BlockUpdate) {
         self.prepare_layout(frame, changed);
     }
@@ -1083,9 +1189,9 @@ impl Host for SurfaceHost {
         }
 
         let ghost = self.drag_ghost.clone().or_else(|| frame.drag.as_ref().zip(drop_line).and_then(|(drag, line)| {
-            let node = frame.node_at(drag.source)?;
-            let text = node.node.text_content().chars().take(32).collect::<String>();
-            let text = if text.is_empty() { node.node.type_name().to_owned() } else { text };
+            let node = self.document_node_at(drag.source)?;
+            let text = node.text_content().chars().take(32).collect::<String>();
+            let text = if text.is_empty() { node.type_name().to_owned() } else { text };
             Some((Point { x: line.left + 8.0, y: line.top + 8.0 }, text))
         }));
         if let Some((at, text)) = ghost {
@@ -1106,26 +1212,29 @@ impl Host for SurfaceHost {
             }
         }
 
+        let visible = self.measure_viewport();
+        let origins: Vec<_> = visible.clone().map(|index| self.origin(index)).collect();
+        let visible_blocks = self.blocks[visible].iter().zip(&origins)
+            .map(|(block, &y)| (&block.measured.get().expect("measured visible block").scene, y));
         let mut label_scene = Scene::default();
-        let mut shaper = Shaper { fonts: &mut self.fonts, base: 0, composition: None };
+        let fonts = self.fonts.get_mut();
+        let mut shaper = Shaper { fonts, base: 0, composition: None };
         for (point, text) in labels {
             shaper.label(&text, point.x, point.y, &mut label_scene);
         }
-        let viewport = self.viewport().unwrap_or_default();
         self.pixels.fill(PAPER.0 & 0x00ff_ffff);
         let mut canvas = Canvas { width: self.width as usize, height: self.height as usize, pixels: &mut self.pixels, scroll: self.scroll };
-        let visible_blocks = self.blocks.iter().filter(|block| block.origin_y < viewport.bottom && block.origin_y + block.height >= viewport.top);
-        for block in visible_blocks.clone() {
-            for fill in &block.scene.fills {
-                canvas.fill(translate(fill.rect, 0.0, block.origin_y), fill.color);
+        for (scene, origin) in visible_blocks.clone() {
+            for fill in &scene.fills {
+                canvas.fill(translate(fill.rect, 0.0, origin), fill.color);
             }
         }
         for highlight in &frame.selection.highlights {
             canvas.fill(*highlight, SELECTION);
         }
-        for block in visible_blocks {
-            for glyph in &block.scene.glyphs {
-                canvas.glyph(&mut self.raster, &mut self.fonts, glyph, block.origin_y);
+        for (scene, origin) in visible_blocks {
+            for glyph in &scene.glyphs {
+                canvas.glyph(&mut self.raster, fonts, glyph, origin);
             }
         }
         if frame.focused {
@@ -1147,7 +1256,7 @@ impl Host for SurfaceHost {
             canvas.fill(item.rect, item.color);
         }
         for glyph in &label_scene.glyphs {
-            canvas.glyph(&mut self.raster, &mut self.fonts, glyph, 0.0);
+            canvas.glyph(&mut self.raster, fonts, glyph, 0.0);
         }
         for handle in handles {
             canvas.fill(handle, BLUE);
@@ -1186,10 +1295,18 @@ impl Host for SurfaceHost {
             self.scroll.y += delta.y;
         }
         self.limit_scroll();
+        self.measure_viewport();
+        self.limit_scroll();
     }
 
     fn update_accessibility(&mut self, update: &AccessibilityTreeUpdate) {
-        self.accessibility = Some(update.clone());
+        self.accessibility_state = None;
+        self.accessibility = OnceCell::from(update.clone());
+    }
+
+    fn update_accessibility_state(&mut self, state: &EditorState) {
+        self.accessibility_state = Some(state.clone());
+        self.accessibility = OnceCell::new();
     }
 }
 
@@ -1364,9 +1481,11 @@ mod tests {
         let heading = ["Inter-Bold"; 4];
         let code = ["JetBrainsMono-Regular"; 2];
         for (block, expected) in host.blocks.iter().zip([paragraph.as_slice(), &heading, &code]) {
-            assert_eq!(block.scene.glyphs.len(), expected.len());
-            for (glyph, expected) in block.scene.glyphs.iter().zip(expected) {
-                let face = host.fonts.db().face(glyph.physical.cache_key.font_id).unwrap();
+            let glyphs = &block.measured.get().unwrap().scene.glyphs;
+            assert_eq!(glyphs.len(), expected.len());
+            let fonts = host.fonts.borrow();
+            for (glyph, expected) in glyphs.iter().zip(expected) {
+                let face = fonts.db().face(glyph.physical.cache_key.font_id).unwrap();
                 assert_eq!(face.post_script_name.as_str(), *expected);
                 assert_eq!(face.weight.0, if expected.contains("Bold") { 700 } else { 400 });
                 assert_eq!(face.style, if expected.contains("Italic") { Style::Italic } else { Style::Normal });
@@ -1424,15 +1543,44 @@ mod tests {
         let after = doc(schema, vec![paragraph(schema, "a changed paragraph that wraps in a narrower viewport"), suffix]);
         let mut host = SurfaceHost::deterministic(170, 120);
         host.update_layout(&frame(&before, &Selection::cursor(1)), &BlockUpdate::between(None, &before));
-        let previous_y = host.blocks[1].origin_y;
-        let previous_shaping = host.blocks[1].scene.glyphs.as_ptr();
+        let previous_y = host.origin(1);
+        let previous_shaping = host.measure_block(1).scene.glyphs.as_ptr();
         host.update_layout(&frame(&after, &Selection::cursor(1)), &BlockUpdate::between(Some(&before), &after));
-        assert_eq!(previous_shaping, host.blocks[1].scene.glyphs.as_ptr());
-        assert!(host.blocks[1].origin_y > previous_y);
-        assert_eq!(host.blocks[1].source.from, after.child(0).node_size());
+        assert_eq!(previous_shaping, host.measure_block(1).scene.glyphs.as_ptr());
+        assert!(host.origin(1) > previous_y);
+        assert_eq!(host.position(1), after.child(0).node_size());
         host.scroll_by(Point { x: 0.0, y: 1_000.0 });
         assert!(host.viewport().unwrap().top > 0.0);
         assert_eq!(host.document_point(Point::default()).y, host.viewport().unwrap().top);
+    }
+
+    #[test]
+    fn large_documents_shape_visible_blocks_and_reuse_their_suffix_on_typing() {
+        let schema = prosemirror_schema_basic::schema();
+        let model = doc(schema, (0..1000).map(|_| paragraph(schema, "Unchanged text")).collect());
+        let state = EditorState::create(prosemirror_state::EditorStateConfig {
+            schema: schema.clone(),
+            doc: Some(model),
+            selection: Some(Selection::cursor(1)),
+            stored_marks: None,
+            plugins: Vec::new(),
+        });
+        let mut editor = prosemirror_editor::Editor::new(
+            state, SurfaceHost::deterministic(500, 210), prosemirror_editor::EditorProps::default(),
+        );
+        let cached = editor.host().measure_block(1).scene.glyphs.as_ptr();
+        let previous = editor.host().position(999);
+        assert!(editor.host().blocks[999].measured.get().is_none());
+        editor.handle(prosemirror_editor::Event::TextInput("x".into())).unwrap();
+        assert_eq!(editor.host().position(999), previous + 1);
+        assert_eq!(editor.host().measure_block(1).scene.glyphs.as_ptr(), cached);
+        assert!(editor.host().blocks[999].measured.get().is_none());
+        let mut select_all = editor.state().tr();
+        select_all.set_selection(Selection::All);
+        editor.dispatch(select_all).unwrap();
+        assert!(editor.host().blocks[999].measured.get().is_none());
+        assert!(editor.host().coords_at_pos(previous + 2, 1).unwrap().top > 10000.0);
+        assert!(editor.host().blocks[999].measured.get().is_some());
     }
 
     #[test]

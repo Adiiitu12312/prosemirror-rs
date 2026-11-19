@@ -124,12 +124,18 @@ pub trait Layout {
             })
         }).collect()
     }
+
+    /// Geometry needed for painting. Virtualized hosts can restrict this to
+    /// the visible viewport while supporting full `selection_rects` queries.
+    fn viewport_selection_rects(&self, from: usize, to: usize) -> Vec<Rect> {
+        self.selection_rects(from, to)
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ClipboardContent {
     pub plain_text: String,
-    /// Portable clipboard markup, including ProseMirror slice context.
+    /// An HTML fragment for interchange with other applications.
     pub html: Option<String>,
     /// An opaque, editor-specific representation for rich round trips.
     pub internal: Option<Vec<u8>>,
@@ -153,6 +159,12 @@ pub enum CursorIcon {
 /// supplies content, decorations, and selection state. The host supplies text
 /// shaping, viewport coordinates, and platform resources.
 pub trait Host: Layout {
+    /// Opt in to frames that carry only the blocks that need layout. Their
+    /// absolute indices are identified by `DisplayList::block_range`. The
+    /// host retains earlier blocks outside the replaced range and resolves
+    /// block bounds on demand through its layout.
+    fn incremental_display_list(&self) -> bool { false }
+
     /// Measure the new frame before the editor asks for its selection geometry.
     /// Called even for selection, decoration, and preedit-only changes.
     fn update_layout(&mut self, _frame: &DisplayList, _changed: &BlockUpdate) {}
@@ -193,6 +205,13 @@ pub trait Host: Layout {
     }
 
     fn update_accessibility(&mut self, _update: &AccessibilityTreeUpdate) {}
+
+    /// An accessibility consumer can retain the state and project its outline
+    /// when the platform requests it. Existing consumers receive the outline
+    /// immediately through `update_accessibility`.
+    fn update_accessibility_state(&mut self, state: &EditorState) {
+        self.update_accessibility(&accessibility_tree(state));
+    }
 }
 
 fn scroll_delta(from: f64, to: f64, view_from: f64, view_to: f64) -> f64 {
@@ -240,6 +259,9 @@ pub struct DisplayList {
     pub editable: bool,
     /// One entry per top-level document child, in model order.
     pub blocks: Vec<DisplayNode>,
+    /// Absolute child indices when this frame only replaces some blocks.
+    /// A partial frame with no blocks leaves the retained scene intact.
+    pub block_range: Option<Range<usize>>,
     /// Zero-width widgets between top-level children.
     pub root_widgets: Vec<DisplayWidget>,
     pub selection: SelectionDisplay,
@@ -348,12 +370,26 @@ impl DisplayList {
 
     /// Projects model data for the host's next layout pass.
     pub fn unmeasured(doc: &Node, selection: &Selection, decorations: &DecorationGroup) -> Self {
+        Self::project(doc, selection, decorations, None, 0)
+    }
+
+    pub(crate) fn unmeasured_blocks(
+        doc: &Node, selection: &Selection, range: Range<usize>, offset: usize,
+    ) -> Self {
+        Self::project(doc, selection, &DecorationGroup::default(), Some(range), offset)
+    }
+
+    fn project(
+        doc: &Node, selection: &Selection, decorations: &DecorationGroup,
+        block_range: Option<Range<usize>>, mut offset: usize,
+    ) -> Self {
         let local = decorations.locals(doc);
-        let mut blocks = Vec::with_capacity(doc.child_count());
+        let range = block_range.clone().unwrap_or(0..doc.child_count());
+        let children = &doc.content().children;
+        let mut blocks = Vec::with_capacity(range.len());
         let mut root_widgets = Vec::new();
         let mut preceding = &[][..];
-        let mut offset = 0;
-        for child in &doc.content().children {
+        for child in &children[range] {
             root_widgets.extend(widgets(doc, &local, offset, 0, preceding, child.marks()));
             blocks.push(display_node(doc, child, 0, offset, &local, decorations));
             preceding = child.marks();
@@ -363,7 +399,7 @@ impl DisplayList {
         root_widgets.extend(widgets(doc, &local, document_size, 0, preceding, &[]));
         Self {
             document_size, attributes: Attributes::new(), editable: true,
-            blocks, root_widgets, selection: SelectionDisplay::new(doc, selection),
+            blocks, block_range, root_widgets, selection: SelectionDisplay::new(doc, selection),
             composition: None, composition_caret: None, focused: false, drag: None, touch_handles: false,
         }
     }
@@ -372,7 +408,11 @@ impl DisplayList {
         for node in &mut self.blocks {
             node.measure(layout);
         }
-        self.selection.measure(layout);
+        self.measure_selection(layout, false);
+    }
+
+    pub(crate) fn measure_selection(&mut self, layout: &(impl Layout + ?Sized), viewport_only: bool) {
+        self.selection.measure(layout, viewport_only);
         self.composition_caret = self.composition.as_ref().and_then(|composition| {
             layout.composition_caret(composition).or_else(|| layout.coords_at_pos(composition.from, 1))
         });
@@ -433,7 +473,7 @@ impl SelectionDisplay {
         }
     }
 
-    fn measure(&mut self, layout: &(impl Layout + ?Sized)) {
+    fn measure(&mut self, layout: &(impl Layout + ?Sized), viewport_only: bool) {
         self.highlights.clear();
         self.carets.clear();
         if !self.visible && self.kind == SelectionKind::Custom {
@@ -454,7 +494,12 @@ impl SelectionDisplay {
                     self.carets.push(SelectionCaret { pos: range.start, rect });
                 }
             } else {
-                self.highlights.extend(layout.selection_rects(range.start, range.end));
+                let rects = if viewport_only {
+                    layout.viewport_selection_rects(range.start, range.end)
+                } else {
+                    layout.selection_rects(range.start, range.end)
+                };
+                self.highlights.extend(rects);
             }
         }
     }

@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, ops::Range};
 use std::rc::Rc;
 
 use prosemirror_commands::{mac_base_keymap, pc_base_keymap};
@@ -9,7 +9,7 @@ use prosemirror_transform::drop_point;
 use serde_json::json;
 
 use crate::{
-    accessibility_tree, move_selection, paste_slice, Attributes, BlockUpdate, ClipboardEvent,
+    move_selection, paste_slice, Attributes, BlockUpdate, ClipboardEvent,
     CompositionDisplay, CompositionEvent, Decoration, DecorationGroup, DecorationType, Direction, DisplayList, DragDisplay, DragEvent,
     EditorProps, Event, EventAction, Host, KeyInput, MakeNodeView, MakePluginView, Movement,
     NodeView, PluginView, Point, PointerButton, PointerEvent, PointerInput, TouchEvent, ViewMutation,
@@ -100,8 +100,8 @@ impl<H: Host> Editor<H> {
             node_views: Vec::new(), plugin_views: Vec::new(), pointer: None, drag: None,
             composition: None, composition_id: 0, goal_x: None, focused: false, touch_handles: false,
         };
-        editor.refresh_props(None);
-        editor.render(None);
+        editor.refresh_props(None, None);
+        editor.render(None, None);
         editor
     }
 
@@ -123,8 +123,8 @@ impl<H: Host> Editor<H> {
     pub fn set_props(&mut self, props: EditorProps) {
         self.props = props;
         let previous = self.state.clone();
-        self.refresh_props(Some(&previous));
-        self.render(None);
+        self.refresh_props(Some(&previous), None);
+        self.render(None, None);
     }
 
     pub fn update_state(&mut self, state: EditorState) {
@@ -133,11 +133,11 @@ impl<H: Host> Editor<H> {
             self.composition = None;
             self.drag = None;
         }
-        self.replace_state(state);
+        self.replace_state(state, None);
     }
 
     /// Refresh geometry after a host resize without changing editor state.
-    pub fn redraw(&mut self) { self.render(None); }
+    pub fn redraw(&mut self) { self.render(None, None); }
 
     pub fn dispatch(&mut self, transaction: Transaction) -> Result<bool, EditorError> {
         self.dispatch_transaction(transaction).map(DispatchOutcome::handled)
@@ -159,7 +159,11 @@ impl<H: Host> Editor<H> {
         for tr in &applied.transactions {
             self.map_interactions(tr);
         }
-        self.replace_state(applied.state);
+        let local = match applied.transactions.as_slice() {
+            [tr] if tr.before().ptr_eq(&self.state.doc) => tr.single_block_replacement(),
+            _ => None,
+        };
+        self.replace_state(applied.state, local);
         Ok(DispatchOutcome::Applied)
     }
 
@@ -200,19 +204,32 @@ impl<H: Host> Editor<H> {
         })
     }
 
-    fn replace_state(&mut self, state: EditorState) {
+    fn replace_state(&mut self, state: EditorState, local: Option<(usize, usize)>) {
         let previous = std::mem::replace(&mut self.state, state);
         if self.state.doc != previous.doc {
             self.goal_x = None;
         }
-        self.refresh_props(Some(&previous));
-        self.render(Some(&previous.doc));
+        let undecorated = self.decorations.members.is_empty();
+        self.refresh_props(Some(&previous), local);
+        let patch = if self.host.incremental_display_list()
+            && undecorated && self.decorations.members.is_empty() && self.composition.is_none()
+        {
+            if self.state.doc.ptr_eq(&previous.doc) {
+                Some((0..0, 0))
+            } else {
+                local.map(|(index, start)| (index..index + 1, start))
+            }
+        } else {
+            None
+        };
+        self.render(Some(&previous.doc), patch);
         if self.state.scroll_to_selection > previous.scroll_to_selection && self.scroll_to_selection() {
             self.paint();
         }
     }
 
-    fn refresh_props(&mut self, previous: Option<&EditorState>) {
+    fn refresh_props(&mut self, previous: Option<&EditorState>, local: Option<(usize, usize)>) {
+        let undecorated = self.decorations.members.is_empty();
         self.attributes.clear();
         self.decorations.members.clear();
         for props in self.props.providers(&self.state) {
@@ -233,7 +250,8 @@ impl<H: Host> Editor<H> {
                 }
             }
             if let Some(decorations) = &props.decorations {
-                self.decorations.members.extend(decorations(&self.state).members);
+                self.decorations.members.extend(decorations(&self.state).members.into_iter()
+                    .filter(|set| !set.is_empty()));
             }
         }
         let factories = self.props.providers(&self.state).filter_map(|props| props.plugin_view.clone())
@@ -251,10 +269,55 @@ impl<H: Host> Editor<H> {
         } else if let Some(previous) = previous {
             for (_, view) in &mut self.plugin_views { view.update(&self.state, previous); }
         }
-        self.reconcile_node_views();
+        if !(undecorated && self.decorations.members.is_empty()
+            && local.zip(previous).is_some_and(|((index, start), previous)| {
+                self.shift_unaffected_node_views(&previous.doc, index, start)
+            }))
+        {
+            self.reconcile_node_views();
+        }
+    }
+
+    fn shift_unaffected_node_views(&mut self, previous: &Node, index: usize, start: usize) -> bool {
+        let old_end = start + previous.child(index).node_size();
+        let block = self.state.doc.child(index);
+        let new_end = start + block.node_size();
+        if self.node_views.iter().any(|view| (start..old_end).contains(&view.position)) {
+            return false;
+        }
+        let providers: Vec<_> = self.props.providers(&self.state).filter(|props| !props.node_views.is_empty()).collect();
+        if !providers.is_empty() {
+            let has_factory = |node: &Node| providers.iter().any(|props| props.node_views.contains_key(node.type_name()));
+            let mut custom = has_factory(block);
+            if !custom {
+                block.descendants(|node, _, _, _| {
+                    custom |= has_factory(node);
+                    !custom
+                });
+            }
+            if custom { return false; }
+        }
+        let selected = match self.state.selection { Selection::Node { anchor } => Some(anchor), _ => None };
+        for entry in &mut self.node_views {
+            if entry.position >= old_end && old_end != new_end {
+                let pos = new_end + (entry.position - old_end);
+                if !entry.view.update(&entry.node, pos, &self.decorations) {
+                    if entry.selected { entry.view.deselect(); }
+                    entry.view.destroy();
+                    entry.view = (entry.factory)(&entry.node, pos, &self.decorations);
+                    entry.selected = false;
+                }
+                entry.position = pos;
+            }
+            set_node_view_selected(entry, selected);
+        }
+        true
     }
 
     fn reconcile_node_views(&mut self) {
+        if self.node_views.is_empty() && self.props.providers(&self.state).all(|props| props.node_views.is_empty()) {
+            return;
+        }
         let mut available = std::mem::take(&mut self.node_views);
         let selected = match self.state.selection { Selection::Node { anchor } => Some(anchor), _ => None };
         let doc = &self.state.doc;
@@ -290,13 +353,7 @@ impl<H: Host> Editor<H> {
                 let view = factory(node, pos, &self.decorations);
                 NodeViewEntry { node: node.clone(), decorations, position: pos, factory, view, selected: false }
             };
-            if selected == Some(pos) && !entry.selected {
-                entry.view.select();
-                entry.selected = true;
-            } else if selected != Some(pos) && entry.selected {
-                entry.view.deselect();
-                entry.selected = false;
-            }
+            set_node_view_selected(&mut entry, selected);
             self.node_views.push(entry);
             true
         });
@@ -306,22 +363,31 @@ impl<H: Host> Editor<H> {
         }
     }
 
-    fn render(&mut self, previous: Option<&Node>) {
-        let changed = BlockUpdate::between(previous, &self.state.doc);
-        let frame = self.frame();
+    fn render(&mut self, previous: Option<&Node>, patch: Option<(Range<usize>, usize)>) {
+        let changed = if let Some((range, _)) = &patch {
+            BlockUpdate { previous: range.clone(), current: range.clone() }
+        } else {
+            BlockUpdate::between(previous, &self.state.doc)
+        };
+        let frame = self.frame(patch);
         self.host.update_layout(&frame, &changed);
         self.draw_frame(frame, &changed);
-        self.host.update_accessibility(&accessibility_tree(&self.state));
+        self.host.update_accessibility_state(&self.state);
     }
 
     fn paint(&mut self) {
-        let frame = self.frame();
-        let changed = BlockUpdate::between(Some(&self.state.doc), &self.state.doc);
-        self.draw_frame(frame, &changed);
+        let patch = (self.host.incremental_display_list() && self.decorations.members.is_empty())
+            .then_some((0..0, 0));
+        let frame = self.frame(patch);
+        self.draw_frame(frame, &BlockUpdate::default());
     }
 
-    fn frame(&self) -> DisplayList {
-        let mut frame = DisplayList::unmeasured(&self.state.doc, &self.state.selection, &self.decorations);
+    fn frame(&self, patch: Option<(Range<usize>, usize)>) -> DisplayList {
+        let mut frame = if let Some((range, start)) = patch {
+            DisplayList::unmeasured_blocks(&self.state.doc, &self.state.selection, range, start)
+        } else {
+            DisplayList::unmeasured(&self.state.doc, &self.state.selection, &self.decorations)
+        };
         frame.attributes = self.attributes.clone();
         frame.editable = self.editable();
         frame.composition = self.composition.clone();
@@ -332,7 +398,11 @@ impl<H: Host> Editor<H> {
     }
 
     fn draw_frame(&mut self, mut frame: DisplayList, changed: &BlockUpdate) {
-        frame.measure(&self.host);
+        if self.host.incremental_display_list() {
+            frame.measure_selection(&self.host, true);
+        } else {
+            frame.measure(&self.host);
+        }
         let caret = self.focused.then(|| {
             let pos = self.state.selection.head(&self.state.doc);
             frame.composition_caret.or_else(|| self.host.coords_at_pos(pos, 1))
@@ -475,7 +545,7 @@ impl<H: Host> Editor<H> {
             }
             CompositionEvent::Commit(text) => {
                 let Some(composition) = self.composition.take() else { return self.text_input(&text) };
-                if text.is_empty() { self.render(Some(&self.state.doc.clone())); return Ok(true); }
+                if text.is_empty() { self.render(Some(&self.state.doc.clone()), None); return Ok(true); }
                 let mut tr = self.state.tr();
                 tr.insert_text(&text, composition.from, composition.to).scroll_into_view()
                     .set_meta("composition", json!(self.composition_id));
@@ -488,7 +558,7 @@ impl<H: Host> Editor<H> {
             }
             CompositionEvent::Cancel => { self.composition = None; }
         }
-        self.render(Some(&self.state.doc.clone()));
+        self.render(Some(&self.state.doc.clone()), None);
         Ok(true)
     }
 
@@ -779,6 +849,14 @@ impl<H: Host> Drop for Editor<H> {
             if entry.selected { entry.view.deselect(); }
             entry.view.destroy();
         }
+    }
+}
+
+fn set_node_view_selected(entry: &mut NodeViewEntry, selection: Option<usize>) {
+    let selected = selection == Some(entry.position);
+    if selected != entry.selected {
+        if selected { entry.view.select(); } else { entry.view.deselect(); }
+        entry.selected = selected;
     }
 }
 

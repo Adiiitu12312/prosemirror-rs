@@ -16,15 +16,17 @@ impl Layout for CoreHost {
 }
 
 impl Host for CoreHost {
+    fn incremental_display_list(&self) -> bool { true }
     fn draw(&mut self, _: &DisplayList, _: &BlockUpdate) {}
+    fn update_accessibility_state(&mut self, _: &prosemirror_state::EditorState) {}
 }
 
-pub(super) fn run_core() -> Result<(), Box<dyn Error>> {
-    run("core", || CoreHost)
+pub(super) fn run_core(blocks: usize) -> Result<(), Box<dyn Error>> {
+    run("core", blocks, || CoreHost)
 }
 
-pub(super) fn run_surface() -> Result<(), Box<dyn Error>> {
-    run("surface", || SurfaceHost::deterministic(900, 760))
+pub(super) fn run_surface(blocks: usize) -> Result<(), Box<dyn Error>> {
+    run("surface", blocks, || SurfaceHost::deterministic(900, 760))
 }
 
 fn document(blocks: usize) -> Value {
@@ -35,7 +37,7 @@ fn document(blocks: usize) -> Value {
     json!({"type": "doc", "content": paragraphs})
 }
 
-fn report(host: &str, operation: &str, count: usize, started: Instant) {
+fn report(host: &str, blocks: usize, operation: &str, count: usize, started: Instant) {
     let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
     let memory = fs::read_to_string("/proc/self/status").unwrap_or_default();
     let memory_kib = |label: &str| {
@@ -45,6 +47,7 @@ fn report(host: &str, operation: &str, count: usize, started: Instant) {
     };
     println!("{}", json!({
         "host": host,
+        "blocks": blocks,
         "operation": operation,
         "count": count,
         "total_ms": elapsed_ms,
@@ -54,12 +57,11 @@ fn report(host: &str, operation: &str, count: usize, started: Instant) {
     }));
 }
 
-fn run<H: Host>(host_name: &str, host: impl FnOnce() -> H) -> Result<(), Box<dyn Error>> {
-    const BLOCKS: usize = 5_000;
+fn run<H: Host>(host_name: &str, blocks: usize, host: impl FnOnce() -> H) -> Result<(), Box<dyn Error>> {
     const CHARACTERS: usize = 1_000;
     const PASTE_BLOCKS: usize = 500;
     const HISTORY_STEPS: usize = 200;
-    let saved = serde_json::to_vec(&document(BLOCKS))?;
+    let saved = serde_json::to_vec(&document(blocks))?;
 
     let open_start = Instant::now();
     let doc = setup::schema().node_from_json(&serde_json::from_slice(&saved)?)?;
@@ -68,7 +70,7 @@ fn run<H: Host>(host_name: &str, host: impl FnOnce() -> H) -> Result<(), Box<dyn
     let platform = Platform::Other;
     let mut editor = Editor::with_platform(state, host(), setup::props(platform), platform);
     editor.handle(Event::Focus)?;
-    report(host_name, "open_5000_blocks", 1, open_start);
+    report(host_name, blocks, "open", 1, open_start);
 
     let type_start = Instant::now();
     for _ in 0..CHARACTERS {
@@ -76,7 +78,7 @@ fn run<H: Host>(host_name: &str, host: impl FnOnce() -> H) -> Result<(), Box<dyn
             return Err("Typing benchmark did not apply an input event".into());
         }
     }
-    report(host_name, "type_1000_characters", CHARACTERS, type_start);
+    report(host_name, blocks, "type_1000_characters", CHARACTERS, type_start);
 
     let source = setup::schema().node_from_json(&document(PASTE_BLOCKS))?;
     let slice = Slice::new(Fragment::from_nodes(source.content().children.clone()), 0, 0);
@@ -87,7 +89,7 @@ fn run<H: Host>(host_name: &str, host: impl FnOnce() -> H) -> Result<(), Box<dyn
     if editor.state().doc.child_count() < old_children + PASTE_BLOCKS - 1 {
         return Err("Paste benchmark did not insert its block slice".into());
     }
-    report(host_name, "paste_500_blocks", 1, paste_start);
+    report(host_name, blocks, "paste_500_blocks", 1, paste_start);
 
     let before_history = editor.state().doc.clone();
     for _ in 0..HISTORY_STEPS {
@@ -104,7 +106,7 @@ fn run<H: Host>(host_name: &str, host: impl FnOnce() -> H) -> Result<(), Box<dyn
         }
         editor.dispatch(transaction.expect("undo dispatches a history transaction"))?;
     }
-    report(host_name, "undo_200", HISTORY_STEPS, undo_start);
+    report(host_name, blocks, "undo_200", HISTORY_STEPS, undo_start);
     if editor.state().doc != before_history {
         return Err("Undo benchmark failed to restore the pre-edit document".into());
     }
@@ -116,7 +118,7 @@ fn run<H: Host>(host_name: &str, host: impl FnOnce() -> H) -> Result<(), Box<dyn
         }
         editor.dispatch(transaction.expect("redo dispatches a history transaction"))?;
     }
-    report(host_name, "redo_200", HISTORY_STEPS, redo_start);
+    report(host_name, blocks, "redo_200", HISTORY_STEPS, redo_start);
     if editor.state().doc != after_history {
         return Err("Redo benchmark failed to restore the edited document".into());
     }

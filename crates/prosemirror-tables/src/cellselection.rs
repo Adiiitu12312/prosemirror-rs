@@ -136,8 +136,23 @@ pub fn table_editing(options: TableEditingOptions) -> Plugin {
     Plugin::new(
         PluginKey { name: TABLE_EDITING_KEY.into() },
         Some(Arc::new(TableEditingField)),
-    ).with_append_transaction(move |_, old, state| {
-        let fix = fix_tables(state, Some(old)).ok().flatten();
+    ).with_append_transaction(move |transactions, old, state| {
+        let changes_tables = match transactions {
+            [tr] if !tr.doc_changed() => false,
+            [tr] => tr.single_block_replacement().is_none_or(|(index, _)| {
+                let block = state.doc.child(index);
+                let is_table = |node: &Node| node.node_type()
+                    .is_some_and(|kind| kind.spec.table_role.as_deref() == Some("table"));
+                let mut contains_table = is_table(block);
+                block.descendants(|node, _, _, _| {
+                    contains_table |= is_table(node);
+                    !contains_table
+                });
+                contains_table
+            }),
+            _ => true,
+        };
+        let fix = changes_tables.then(|| fix_tables(state, Some(old)).ok().flatten()).flatten();
         normalize_selection(state, fix, options.allow_table_node_selection)
     })
 }
