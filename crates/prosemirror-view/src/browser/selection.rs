@@ -93,7 +93,7 @@ pub(crate) fn has_selection(root: &HtmlElement, editable: bool) -> bool {
     })
 }
 
-fn editor_owns_selection(root: &HtmlElement, editable: bool) -> bool {
+pub(super) fn editor_owns_selection(root: &HtmlElement, editable: bool) -> bool {
     if editable {
         has_focus(root)
     } else {

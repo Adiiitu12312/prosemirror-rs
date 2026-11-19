@@ -7,7 +7,7 @@ use prosemirror_transform::drop_point;
 use serde_json::json;
 use wasm_bindgen::{closure::Closure, JsCast, JsValue};
 use web_sys::{
-    ClipboardEvent, DragEvent, Event, HtmlElement, HtmlTextAreaElement, KeyboardEvent,
+    ClipboardEvent, DragEvent, Event, HtmlElement, HtmlTextAreaElement, InputEvent, KeyboardEvent,
     KeyboardEventInit, MouseEvent, Node, Window,
 };
 
@@ -126,6 +126,7 @@ pub(super) fn dispatch_event(view: &BrowserView, event: &Event) -> Result<(), Js
             Ok(())
         }
         "input" => view.flush_dom(),
+        "beforeinput" => with_event(event, |event: &InputEvent| before_input(view, event)),
         _ => Ok(()),
     }
 }
@@ -185,13 +186,76 @@ fn key_down(view: &BrowserView, event: &KeyboardEvent) -> Result<(), JsValue> {
     }
     let key = event.key();
     view.with_input(|input| input.record_key(&key));
+    let flags = domchange::BrowserFlags::get();
+    let enter = key == "Enter" || key_code == 13;
+    if flags.android && flags.chrome && enter {
+        return Ok(());
+    }
     if key_code != 229 {
         view.flush_dom()?;
+    }
+    if flags.ios && enter && !event.ctrl_key() && !event.alt_key() && !event.meta_key() {
+        if let Some(window) = browser_window(view) {
+            let now = Date::now();
+            view.with_input(|input| input.last_ios_enter = now);
+            let weak = view.downgrade();
+            after(&window, 200, move || {
+                if let Some(view) = weak.upgrade().filter(|view| !view.is_destroyed()) {
+                    let pending = view.with_input(|input| {
+                        if input.last_ios_enter != now {
+                            return false;
+                        }
+                        input.last_ios_enter = -2e8;
+                        true
+                    });
+                    if pending {
+                        super::report_error(dispatch_key(&view, "Enter").map(|_| ()));
+                    }
+                }
+            })?;
+        }
+        return Ok(());
     }
     if run_key_handler(view, event) || capturekeys::capture_key_down(view, event)? {
         event.prevent_default();
     } else {
         view.with_input(|input| input.record_selection(SelectionOrigin::Key));
+    }
+    Ok(())
+}
+
+fn before_input(view: &BrowserView, event: &InputEvent) -> Result<(), JsValue> {
+    if !view.editable() || !domchange::BrowserFlags::get().android
+        || event.input_type() != "deleteContentBackward"
+    {
+        return Ok(());
+    }
+    let Some(window) = browser_window(view) else { return Ok(()) };
+    let changes = view.with_input(|input| input.dom_change_count);
+    let weak = view.downgrade();
+    after(&window, 50, move || {
+        if let Some(view) = weak.upgrade().filter(|view| !view.is_destroyed()) {
+            super::report_error(recover_android_backspace(&view, changes));
+        }
+    })
+}
+
+fn recover_android_backspace(view: &BrowserView, changes: u64) -> Result<(), JsValue> {
+    if view.with_input(|input| changes != input.dom_change_count) {
+        return Ok(());
+    }
+    if view.queue_pending_dom_records() {
+        return view.flush_dom();
+    }
+    view.dom().blur()?;
+    view.focus()?;
+    if !dispatch_key(view, "Backspace")? {
+        let state = view.state();
+        if let Some(cursor) = state.selection.cursor_pos().filter(|&pos| pos > 0) {
+            let mut tr = state.tr();
+            tr.delete(cursor - 1, cursor).scroll_into_view();
+            view.dispatch(tr)?;
+        }
     }
     Ok(())
 }

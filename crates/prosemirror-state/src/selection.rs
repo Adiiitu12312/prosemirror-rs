@@ -1,10 +1,14 @@
+use std::any::Any;
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 use prosemirror_model::{Fragment, ModelError, Node, ResolvedPos, Slice};
 use prosemirror_transform::Mappable;
 use serde_json::Value;
 
+use crate::custom_selection::{self, RegisteredBookmark};
 use crate::gap_cursor::gap_cursor_or_near;
-use crate::CellSelection;
+use crate::{BookmarkDecoder, CellSelection, CustomSelection, CustomSelectionBookmark, RegisteredSelection, SelectionDecoder};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -24,6 +28,9 @@ pub enum Selection {
     GapCursor { pos: usize },
     #[serde(rename = "cell")]
     Cell(CellSelection),
+    /// Deserialize custom selections with [`Selection::from_json`] and the current document.
+    #[serde(untagged, skip_deserializing)]
+    Custom(RegisteredSelection),
 }
 
 impl Selection {
@@ -54,6 +61,22 @@ impl Selection {
         CellSelection::create(doc, anchor, head).map(Self::Cell)
     }
 
+    /// Register the document-aware decoder for a custom selection JSON ID.
+    pub fn json_id(id: impl Into<String>, decode: SelectionDecoder) -> Result<(), ModelError> {
+        custom_selection::register_selection(id.into(), decode)
+    }
+
+    /// Wrap a custom selection using the JSON ID of its decoder.
+    pub fn custom(id: impl Into<String>, selection: impl CustomSelection) -> Result<Self, ModelError> {
+        RegisteredSelection::new(id.into(), Arc::new(selection)).map(Self::Custom)
+    }
+
+    pub fn as_custom<T: CustomSelection>(&self) -> Option<&T> {
+        let Self::Custom(selection) = self else { return None };
+        let selection: &dyn Any = selection.implementation.as_ref();
+        selection.downcast_ref::<T>()
+    }
+
     pub fn from(&self) -> usize {
         match self {
             Self::Text { anchor, head } => (*anchor).min(*head),
@@ -61,6 +84,7 @@ impl Selection {
             Self::All => 0,
             Self::GapCursor { pos } => *pos,
             Self::Cell(cell) => cell.from(),
+            Self::Custom(selection) => selection.ranges[0].from.pos,
         }
     }
 
@@ -71,6 +95,7 @@ impl Selection {
             Self::All => doc.content().size(),
             Self::GapCursor { pos } => *pos,
             Self::Cell(cell) => cell.to(doc),
+            Self::Custom(selection) => selection.ranges[0].to.pos,
         }
     }
 
@@ -81,6 +106,7 @@ impl Selection {
             Self::All => 0,
             Self::GapCursor { pos } => *pos,
             Self::Cell(cell) => cell.from(),
+            Self::Custom(selection) => selection.implementation.anchor().pos,
         }
     }
 
@@ -91,6 +117,7 @@ impl Selection {
             Self::All => doc.content().size(),
             Self::GapCursor { pos } => *pos,
             Self::Cell(cell) => cell.to(doc),
+            Self::Custom(selection) => selection.implementation.head().pos,
         }
     }
 
@@ -101,15 +128,17 @@ impl Selection {
             Self::All => false,
             Self::GapCursor { .. } => true,
             Self::Cell(_) => false,
+            Self::Custom(selection) => selection.ranges.iter().all(|range| range.from.pos == range.to.pos),
         }
     }
 
     pub fn empty_in(&self, doc: &Node) -> bool {
-        if let Self::Cell(cell) = self {
-            return cell.ranges(doc)
-                .is_ok_and(|ranges| ranges.iter().all(|range| range.from.pos == range.to.pos));
+        match self {
+            Self::Cell(cell) => cell.ranges(doc)
+                .is_ok_and(|ranges| ranges.iter().all(|range| range.from.pos == range.to.pos)),
+            Self::Custom(_) => self.empty(),
+            _ => self.from() == self.to(doc),
         }
-        self.from() == self.to(doc)
     }
 
     pub fn cursor_pos(&self) -> Option<usize> {
@@ -120,10 +149,17 @@ impl Selection {
     }
 
     pub fn visible(&self) -> bool {
-        !matches!(self, Self::Node { .. } | Self::GapCursor { .. } | Self::Cell(_))
+        match self {
+            Self::Node { .. } | Self::GapCursor { .. } | Self::Cell(_) => false,
+            Self::Custom(selection) => selection.implementation.visible(),
+            _ => true,
+        }
     }
 
     pub fn range(&self, doc: &Node) -> Result<SelectionRange, ModelError> {
+        if let Self::Custom(selection) = self {
+            return Ok(selection.ranges[0].clone());
+        }
         Ok(SelectionRange {
             from: doc.resolve(self.from())?,
             to: doc.resolve(self.to(doc))?,
@@ -133,6 +169,7 @@ impl Selection {
     pub fn ranges(&self, doc: &Node) -> Result<Vec<SelectionRange>, ModelError> {
         match self {
             Self::Cell(cell) => cell.ranges(doc),
+            Self::Custom(selection) => Ok(selection.ranges.clone()),
             _ => self.range(doc).map(|range| vec![range]),
         }
     }
@@ -151,6 +188,9 @@ impl Selection {
         if let Self::Cell(cell) = self {
             return cell.content(doc);
         }
+        if let Self::Custom(selection) = self {
+            return selection.implementation.content();
+        }
         if let Some(node) = self.selected_node(doc) {
             return Ok(Slice::new(Fragment::from_nodes(vec![node]), 0, 0));
         }
@@ -158,6 +198,11 @@ impl Selection {
     }
 
     pub fn from_json(doc: &Node, json: &Value) -> Result<Self, ModelError> {
+        let id = json.get("type").and_then(Value::as_str).filter(|id| !id.is_empty())
+            .ok_or_else(|| ModelError::Serialization("Invalid input for Selection.fromJSON".into()))?;
+        if !custom_selection::is_builtin_id(id) {
+            return RegisteredSelection::from_json(doc, id, json).map(Self::Custom);
+        }
         let selection: Self = serde_json::from_value(json.clone())
             .map_err(|error| ModelError::Serialization(error.to_string()))?;
         if let Self::Cell(cell) = &selection {
@@ -241,7 +286,7 @@ impl Selection {
         Self::text(anchor_pos, head_pos)
     }
 
-    pub fn map(&self, doc: &Node, mapping: &impl Mappable) -> Self {
+    pub fn map(&self, doc: &Node, mapping: &dyn Mappable) -> Self {
         match self {
             Self::Text { anchor, head } => {
                 let head = resolve_in(doc, mapping.map(*head, 1));
@@ -266,11 +311,15 @@ impl Selection {
             Self::All => Self::All,
             Self::GapCursor { pos } => gap_cursor_or_near(&resolve_in(doc, mapping.map(*pos, 1))),
             Self::Cell(cell) => cell.map(doc, mapping),
+            Self::Custom(selection) => selection.implementation.map(doc, mapping),
         }
     }
 
     pub fn bookmark(&self) -> SelectionBookmark {
-        SelectionBookmark(self.clone())
+        if let Self::Custom(selection) = self {
+            return selection.implementation.bookmark();
+        }
+        SelectionBookmark(Bookmark::Selection(self.clone()))
     }
 }
 
@@ -282,11 +331,37 @@ pub struct SelectionRange {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct SelectionBookmark(Selection);
+pub struct SelectionBookmark(Bookmark);
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+enum Bookmark {
+    Selection(Selection),
+    Custom(RegisteredBookmark),
+}
 
 impl SelectionBookmark {
-    pub fn map(&self, mapping: &impl Mappable) -> Self {
-        Self(match self.0 {
+    /// Register the decoder used to restore a custom bookmark from stored history.
+    pub fn json_id(id: impl Into<String>, decode: BookmarkDecoder) -> Result<(), ModelError> {
+        custom_selection::register_bookmark(id.into(), decode)
+    }
+
+    pub fn custom(id: impl Into<String>, bookmark: impl CustomSelectionBookmark) -> Self {
+        Self(Bookmark::Custom(RegisteredBookmark::new(id.into(), Arc::new(bookmark))))
+    }
+
+    pub fn as_custom<T: CustomSelectionBookmark>(&self) -> Option<&T> {
+        let Bookmark::Custom(bookmark) = &self.0 else { return None };
+        let bookmark: &dyn Any = bookmark.implementation.as_ref();
+        bookmark.downcast_ref::<T>()
+    }
+
+    pub fn map(&self, mapping: &dyn Mappable) -> Self {
+        let selection = match &self.0 {
+            Bookmark::Selection(selection) => selection,
+            Bookmark::Custom(bookmark) => return bookmark.implementation.map(mapping),
+        };
+        Self(Bookmark::Selection(match *selection {
             Selection::Text { anchor, head } => {
                 Selection::text(mapping.map(anchor, 1), mapping.map(head, 1))
             }
@@ -301,11 +376,16 @@ impl SelectionBookmark {
             Selection::All => Selection::All,
             Selection::GapCursor { pos } => Selection::gap_cursor(mapping.map(pos, 1)),
             Selection::Cell(ref cell) => Selection::Cell(cell.map_bookmark(mapping)),
-        })
+            Selection::Custom(_) => unreachable!("custom selection bookmarks are separate"),
+        }))
     }
 
     pub fn resolve(&self, doc: &Node) -> Selection {
-        match self.0 {
+        let selection = match &self.0 {
+            Bookmark::Selection(selection) => selection,
+            Bookmark::Custom(bookmark) => return bookmark.implementation.resolve(doc),
+        };
+        match *selection {
             Selection::Text { anchor, head } => {
                 Selection::between(&resolve_in(doc, anchor), &resolve_in(doc, head), 1)
             }
@@ -320,6 +400,7 @@ impl SelectionBookmark {
             Selection::All => Selection::All,
             Selection::GapCursor { pos } => gap_cursor_or_near(&resolve_in(doc, pos)),
             Selection::Cell(ref cell) => cell.bookmark().resolve(doc),
+            Selection::Custom(_) => unreachable!("custom selection bookmarks are separate"),
         }
     }
 }

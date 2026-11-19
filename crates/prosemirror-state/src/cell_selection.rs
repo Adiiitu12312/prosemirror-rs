@@ -212,7 +212,7 @@ impl CellSelection {
         Ok(Slice::new(Fragment::from_nodes(rows), 1, 1))
     }
 
-    pub fn map(&self, doc: &Node, mapping: &impl Mappable) -> Selection {
+    pub fn map(&self, doc: &Node, mapping: &(impl Mappable + ?Sized)) -> Selection {
         let anchor = super::selection::resolve_in(doc, mapping.map(self.anchor, 1));
         let head = super::selection::resolve_in(doc, mapping.map(self.head, 1));
         let mapped = Self::create(doc, anchor.pos, head.pos);
@@ -245,7 +245,7 @@ impl CellSelection {
         }
     }
 
-    pub(crate) fn map_bookmark(&self, mapping: &impl Mappable) -> Self {
+    pub(crate) fn map_bookmark(&self, mapping: &(impl Mappable + ?Sized)) -> Self {
         let mapped = self.bookmark().map(mapping);
         Self {
             anchor: mapped.anchor,
@@ -269,7 +269,7 @@ pub struct CellBookmark {
 }
 
 impl CellBookmark {
-    pub fn map(&self, mapping: &impl Mappable) -> Self {
+    pub fn map(&self, mapping: &(impl Mappable + ?Sized)) -> Self {
         Self {
             anchor: mapping.map(self.anchor, 1),
             head: mapping.map(self.head, 1),

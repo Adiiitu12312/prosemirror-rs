@@ -2,10 +2,34 @@
 
 use js_sys::Date;
 use wasm_bindgen::{JsCast, JsValue};
-use web_sys::{Element, MutationRecord, Node};
+use web_sys::{Element, MutationRecord, Node, Selection as DomSelection};
 
 use super::domchange::{self, dom_index, same_node, BrowserFlags, DomChange};
-use super::{BrowserView, DocView, ViewMutation};
+use super::{selection, BrowserView, DocView, ViewMutation};
+
+/// Keep the native range last observed or written by this view.
+#[derive(Default, PartialEq, Eq)]
+pub(super) struct SelectionSnapshot {
+    anchor: Option<Node>,
+    anchor_offset: u32,
+    focus: Option<Node>,
+    focus_offset: u32,
+}
+
+impl SelectionSnapshot {
+    pub(super) fn capture(selection: Option<&DomSelection>) -> Self {
+        selection.map_or_else(Self::default, |selection| Self {
+            anchor: selection.anchor_node(),
+            anchor_offset: selection.anchor_offset(),
+            focus: selection.focus_node(),
+            focus_offset: selection.focus_offset(),
+        })
+    }
+}
+
+pub(super) fn has_focus_and_selection(view: &BrowserView, editable: bool) -> bool {
+    (!editable || view.has_focus()) && selection::has_selection(&view.dom(), editable)
+}
 
 pub(crate) fn observe_mutations(
     view: &BrowserView,
@@ -14,12 +38,14 @@ pub(crate) fn observe_mutations(
 ) -> Result<(), JsValue> {
     let now = Date::now();
     let suppressed = view.with_input(|input| now < input.suppress_selection_until);
-    if suppressed && selection_changed && view.has_focus() {
+    let editable = view.editable();
+    let owns_selection = selection_changed && has_focus_and_selection(view, editable);
+    if suppressed && owns_selection {
         view.sync_selection()?;
     }
-    let read_selection = selection_changed && !suppressed && view.has_focus() && !ignore_selection(view);
+    let read_selection = owns_selection && !suppressed && !ignore_selection(view);
     let root = view.dom();
-    let (change, last_text) = if view.editable() {
+    let (change, last_text) = if editable {
         view.with_doc_view(|doc_view| {
             let mut change = DomChange::default();
             let mut last_text = None;

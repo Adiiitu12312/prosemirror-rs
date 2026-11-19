@@ -29,6 +29,7 @@ use crate::{DecorationGroup, DecorationSet};
 pub use clipboard::BrowserClipboardData;
 pub use domcoords::{PositionAtCoords, ScrollSides, TextblockDirection, ViewportPoint, ViewportRect};
 use domcoords::ScrollOptions;
+use domobserver::SelectionSnapshot;
 pub use selection::SelectionOrigin;
 use selection::WriteSelectionOptions;
 pub use viewdesc::{
@@ -458,7 +459,7 @@ impl BrowserView {
     /// Process DOM records already delivered by the browser or queued on its observer.
     pub fn flush_dom_changes(&self) -> Result<(), JsValue> {
         let records = self.0.borrow().observer.as_ref().map_or_else(Array::new, |observer| observer.dom.take_records());
-        self.observe(records, true)
+        self.observe(records)
     }
 
     fn flush_dom(&self) -> Result<(), JsValue> {
@@ -519,15 +520,23 @@ impl BrowserView {
         self.0.borrow().destroyed
     }
 
-    fn observe(&self, records: Array, selection_changed: bool) -> Result<(), JsValue> {
+    fn observe(&self, records: Array) -> Result<(), JsValue> {
         if self.is_destroyed() {
             return Ok(());
         }
-        let mut pending = self.0.borrow().observer.as_ref().map_or_else(Vec::new, |observer| {
-            std::mem::take(&mut *observer.pending.borrow_mut())
+        let selection = SelectionSnapshot::capture(self.dom_selection().as_ref());
+        let (mut pending, selection_changed) = self.0.borrow().observer.as_ref().map_or_else(|| (Vec::new(), false), |observer| {
+            (std::mem::take(&mut *observer.pending.borrow_mut()), observer.current_selection != selection)
         });
         pending.extend(records.iter().filter_map(|record| record.dyn_into::<MutationRecord>().ok()));
-        domobserver::observe_mutations(self, &pending, selection_changed)
+        domobserver::observe_mutations(self, &pending, selection_changed)?;
+        if domobserver::has_focus_and_selection(self, self.editable()) {
+            let current = SelectionSnapshot::capture(self.dom_selection().as_ref());
+            if let Some(observer) = &mut self.0.borrow_mut().observer {
+                observer.current_selection = current;
+            }
+        }
+        Ok(())
     }
 
     fn read_selection(&self, origin: SelectionOrigin) -> Option<Selection> {
@@ -554,11 +563,15 @@ impl BrowserView {
         {
             return Ok(());
         }
-        let BrowserViewInner { root, doc_view, state, selected_node, .. } = &mut *inner;
+        let BrowserViewInner { root, doc_view, state, selected_node, observer, .. } = &mut *inner;
         selection::sync_node_selection(doc_view, state, selected_node)?;
         selection::write_selection(root, state, doc_view, WriteSelectionOptions {
             editable, force, cursor_wrapper: None,
-        })
+        })?;
+        if let Some(observer) = observer.as_mut().filter(|_| selection::editor_owns_selection(root, editable)) {
+            observer.current_selection = SelectionSnapshot::capture(selection::native_selection(root).as_ref());
+        }
+        Ok(())
     }
 
     fn render(&self, write_selection: bool) -> Result<(), JsValue> {
@@ -652,12 +665,13 @@ impl BrowserView {
         let weak = Rc::downgrade(&self.0);
         let callback = Closure::new(move |records: Array, _: MutationObserver| {
             if let Some(inner) = weak.upgrade() {
-                report_error(BrowserView(inner).observe(records, true));
+                report_error(BrowserView(inner).observe(records));
             }
         });
         let observer = Observer {
             dom: MutationObserver::new(callback.as_ref().unchecked_ref())?,
             pending: RefCell::default(),
+            current_selection: SelectionSnapshot::default(),
             _callback: callback,
         };
         observer.start(&root)?;
@@ -802,6 +816,7 @@ impl Drop for Listener {
 struct Observer {
     dom: MutationObserver,
     pending: RefCell<Vec<MutationRecord>>,
+    current_selection: SelectionSnapshot,
     _callback: Closure<dyn FnMut(Array, MutationObserver)>,
 }
 

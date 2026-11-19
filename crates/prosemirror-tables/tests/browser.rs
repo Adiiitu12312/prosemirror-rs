@@ -217,6 +217,27 @@ fn arrow_extension_and_delete_use_the_table_keymap() {
 }
 
 #[wasm_bindgen_test]
+fn flushing_keeps_cell_selection_until_the_native_range_changes() {
+    let view = mount(None, None);
+    view.focus().unwrap();
+    let state = view.state();
+    let cells = Selection::cell(&state.doc, 2, 7).unwrap();
+    let mut transaction = state.tr();
+    transaction.set_selection(cells.clone());
+    assert!(view.dispatch(transaction).unwrap());
+
+    view.flush_dom_changes().unwrap();
+    view.flush_dom_changes().unwrap();
+    assert_eq!(view.state().selection, cells);
+
+    let (node, offset) = view.dom_at_pos(21, 1).unwrap();
+    let native = document().get_selection().unwrap().unwrap();
+    native.collapse_with_offset(Some(&node), offset).unwrap();
+    view.flush_dom_changes().unwrap();
+    assert_eq!(view.state().selection, Selection::cursor(21));
+}
+
+#[wasm_bindgen_test]
 fn applies_plain_text_clipboard_content_to_each_selected_cell() {
     let view = mount(None, None);
     let state = view.state();
