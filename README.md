@@ -46,13 +46,13 @@ Positions and internal text edits use UTF-16 code units. The model exposes `Node
 
 `prosemirror-editor` wraps an `EditorState` in an `Editor<H>` where `H` implements `Host`. Send typed keyboard, composition, pointer, touch, clipboard, focus, scroll, or drag events through `Editor::handle`. An application can dispatch transactions directly, install direct and plugin view props, and register native node view factories. State plugins continue to own transaction filtering and appending.
 
-Host interface version 1 is exposed as `HOST_INTERFACE_VERSION`. Positions use UTF-16 code units and each host chooses its coordinate units. The host first measures the display list via `Host::update_layout` and then draws it via `Host::draw`. `BlockUpdate` supplies the previous and current changed top-level block index ranges. Hosts can reuse layout outside those ranges and reconcile paint-only changes from the current display list. The display list carries blocks, shaped-text inputs with marks, decorations, widgets, selections, composition, and drag feedback.
+Host interface version 2 is exposed as `HOST_INTERFACE_VERSION`. Positions use UTF-16 code units and each host chooses its coordinate units. The host first measures the display list via `Host::update_layout` and then draws it via `Host::draw`. `BlockUpdate` supplies the previous and current changed top-level block index ranges. Retained hosts opt in through `incremental_display_list` and receive a `block_range` for local replacements or an empty patch for paint-only changes. The host resolves block geometry on demand. The display list carries blocks, marked text runs, decorations, widgets, selections, composition, and drag feedback.
 
-- `Layout` supplies caret and point hit testing, visual line boxes, block bounds, selection rectangles, and preedit caret placement. The host owns Unicode text shaping and maps grapheme clusters and bidirectional visual runs to editor positions.
-- `Host` connects clipboard, IME candidate positioning, cursor icons, focus, viewport scrolling, and a structured accessibility outline. Display geometry uses a single coordinate space. A windowed host translates its pointer and IME coordinates at the platform boundary.
+- `Layout` supplies caret and point hit testing, visual line boxes, block bounds, selection rectangles, and preedit caret placement. `viewport_selection_rects` lets retained hosts limit painting to visible selection geometry. The host owns Unicode text shaping and maps grapheme clusters and bidirectional visual runs to editor positions.
+- `Host` connects clipboard, IME candidate positioning, cursor icons, focus, viewport scrolling, and a structured accessibility outline. A host can retain the accessibility state and generate the outline when requested. Display geometry uses a single coordinate space. A windowed host translates its pointer and IME coordinates at the platform boundary.
 - `NodeView` supports native controllers with update, selection, event filtering, mutation filtering, and destruction callbacks. Direct view props take precedence over view plugin props and attached state plugin props.
 
-The clipboard codec writes plain text and an opaque native slice envelope with its open depths intact. Browser-specific parsing and selection behavior remain in the opt-in browser adapter.
+The clipboard codec writes plain text, an HTML fragment, and an opaque native slice envelope. The HTML carries ProseMirror's `data-pm-slice` open-start, open-end, and ancestor context and is parsed against the active schema. Paste can also read ordinary HTML from other applications.
 
 ## Native reference application
 
@@ -61,33 +61,49 @@ The sample opens a native document with headings, nested lists and task items, q
 Use Enter to add a task item and Ctrl+Shift+Enter or Cmd+Shift+Enter to toggle the current item.
 
 - **Winit** creates the window and reports input, focus, and IME events. The application positions the system IME candidate window using the measured preedit caret.
-- **Cosmic Text** shapes and measures marked runs using native font fallback. Its Swash integration rasterizes glyphs for the CPU display list. **fontdb** supplies the isolated, bundled Inter font database used in scripted tests.
+- **Cosmic Text** shapes and measures marked runs and its Swash integration rasterizes glyphs for the CPU display list. **fontdb** supplies the bundled Inter and JetBrains Mono faces for regular, bold, italic, and bold italic text. The desktop also loads system fallback fonts. Renderer tests check resolved style and shaped font metadata independently of the screenshots.
 - **Softbuffer** presents the same CPU buffer used by headless replay. The **png** crate saves that buffer as an offscreen snapshot without starting a window.
-- **Arboard** reads and writes system text clipboard data. The application retains the opaque rich slice inside the process while it owns the matching text, so rich copy and paste between independent processes uses the plain-text representation.
+- **clipboard-rs** publishes plain text, HTML, and the native slice in one OS clipboard write. The HTML format lets other applications read and write rich content. CI exchanges these formats with a separate process on Linux under Xvfb, macOS, and Windows.
 
 The scripted binary accepts a JSON document, selection, and native event sequence through `--replay INPUT`. It prints the resulting state JSON and can produce an offscreen PNG with `--png OUTPUT`. Use `--snapshot PNG` to render the sample. CI compares decoded pixels against the checked-in sample, typing, selection, block-drag, and task-list images, then publishes screenshots from all three desktop platforms.
 
-The release-mode benchmark is invoked separately as `--bench core` and `--bench surface` so each host starts in a fresh process. It reports total time, mean time per input, and on Linux the process's current and peak resident memory as JSON lines. The core run includes state, history, and display-list construction. The surface run additionally includes layout and rasterization at 900 × 760. CI publishes measurements from the Linux runner.
+The release-mode benchmark takes `--bench core [BLOCKS]` or `--bench surface [BLOCKS]`. Each run starts a fresh process and reports wall time, mean time per input, and the current and peak resident memory on Linux. The core run includes state, history, and display-list projection. The surface run additionally includes layout and rasterization at 900 × 760. CI runs both at 5,000, 10,000, and 50,000 blocks and publishes the raw trials.
 
 ### Benchmark results
 
-The figures below show one release run on GitHub Actions' Ubuntu runner. Times are per operation. Typing, undo, and redo show the mean across the indicated number of operations. Peak RSS covers the full workload in each fresh process. [CI run and raw JSONL artifact](https://github.com/Adiiitu12312/prosemirror-rs/actions/runs/44565536646)
+The 5,000-block measurements are milliseconds per operation. Each typing trial averages 1,000 characters and each undo or redo trial averages 200 steps. The optimized columns are the median of three release trials on GitHub Actions' Ubuntu runner. [Original release run](https://github.com/Adiiitu12312/prosemirror-rs/actions/runs/44569027482) · [Optimized raw trials](https://github.com/Adiiitu12312/prosemirror-rs/actions/runs/44577055176/artifacts/14556607772)
 
-| Workload | Headless core | Sample surface |
-| --- | ---: | ---: |
-| Open 5,000 blocks | 23.58 ms | 206.96 ms |
-| Type 1,000 characters | 8.33 ms per character | 13.64 ms per character |
-| Paste a 500-block slice | 14.06 ms | 41.39 ms |
-| Undo 200 steps | 15.88 ms per step | 19.59 ms per step |
-| Redo 200 steps | 14.46 ms per step | 19.51 ms per step |
-| Peak RSS | 20.64 MiB | 57.18 MiB |
+| Workload | Headless before | Headless after | Sample before | Sample after |
+| --- | ---: | ---: | ---: | ---: |
+| Open 5,000 blocks | 18.46 | 9.71 | 177.72 | 13.88 |
+| Type one character | 6.73 | 0.234 | 10.26 | 1.003 |
+| Paste a 500-block slice | 11.41 | 6.41 | 35.62 | 11.35 |
+| Undo one step | 12.77 | 0.364 | 15.81 | 0.764 |
+| Redo one step | 11.99 | 0.350 | 16.03 | 0.756 |
+
+| Document size | Host | Open | Type | Paste | Undo | Redo |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 10,000 | Headless | 21.99 | 0.445 | 10.58 | 0.594 | 0.575 |
+| 10,000 | Sample | 26.44 | 1.212 | 17.13 | 0.982 | 0.973 |
+| 50,000 | Headless | 128.77 | 2.228 | 40.91 | 2.283 | 2.314 |
+| 50,000 | Sample | 136.84 | 2.880 | 61.94 | 2.658 | 2.648 |
+
+CI checks the median of three trials at each size. It fails for a slowdown above 20% relative to the committed reference, or for missing a 5,000-block budget. The headless budgets are 0.5 ms per character and 1 ms per undo or redo. The sample budgets are 100 ms to open, 4 ms per character, and 5 ms per undo or redo. [Benchmark reference](benchmarks/editor-reference.json)
+
+### Release profile
+
+Instrumented stage timings on the original 5,000-block revision showed that headless typing spent 2.99 ms per character projecting the full display list, 3.90 ms rebuilding the accessibility outline, and 0.60 ms discovering node views. The sample also spent 3.15 ms updating layout and 0.67 ms drawing per character. Initial sample layout consumed 180.10 ms. Constructing the undo or redo transaction cost about 1.8 ms per step, and applying either direction to headless state cost 3.7–4.0 ms. Those timings come from a separate instrumented release run. [Baseline profile](https://github.com/Adiiitu12312/prosemirror-rs/actions/runs/44575205911)
+
+Single-block replacements use the step's affected block to project and shape only the changed scene. The sample indexes model positions and vertical extents, shapes the viewport lazily, and projects accessibility on demand. History keeps typed state and undo metadata and produces the existing JSON on request. Arbitrary decoration changes and structural transactions can still require a wider projection. Editing the model still copies its flat child vector, which is one remaining linear cost.
 
 ### Behavior differences
+
+The differential suite names and asserts all three exceptions against [one fixture](oracle/parity-exceptions.json). Run `npm run test:parity-exceptions` for the [repros](oracle/parity-exceptions.mjs), or pass one case name after `--`. The generic differential fuzzer still fails on every mismatch.
 
 - Transform 1.12.7 computes inverted mirror indices from the full backing map array. The Rust port computes mirrors relative to the appended slice so they stay in range when the source is a sliced mapping. [Upstream `Mapping.appendMappingInverted`](https://code.haverbeke.berlin/prosemirror/prosemirror-transform/src/commit/fe4882e9aca29ae9a9841cb747624cf12c4da719/src/map.ts#L236)
 - Upstream can emit nested mark sets when inverting a group, which its JSON decoder rejects. The Rust port flattens the inversion while preserving operation order, so history can round-trip the result. [Upstream mark set inversion and JSON decoder](https://code.haverbeke.berlin/prosemirror/prosemirror-transform/src/commit/fe4882e9aca29ae9a9841cb747624cf12c4da719/src/mark_step.ts#L173)
 - With the pinned History 1.5.2, the unmodified Collab 1.3.1 redo scenario produces `ABDCE`. The Rust port retains the scenario and checks that result. [Collab redo test](https://github.com/ProseMirror/prosemirror-collab/blob/c019e4cd1e05504d403d98e6bfec67fe1a80c895/test/test-collab.ts) · [History selection restoration](https://code.haverbeke.berlin/prosemirror/prosemirror-history/src/commit/4042c6ce7be9fac86c850760cbbbf2651fc79017/src/history.ts)
-- Native paste uses plain text or the opaque slice envelope. The upstream browser uses DOM clipboard parsing and embeds open-depth context in HTML. Native IME and touch use host events with transaction comparisons in the differential suite. [Upstream View clipboard](https://code.haverbeke.berlin/prosemirror/prosemirror-view/src/commit/2a07ebc03ccfb526b43e60297465129a2cee8ca6/src/clipboard.ts) · [Upstream View input](https://code.haverbeke.berlin/prosemirror/prosemirror-view/src/commit/2a07ebc03ccfb526b43e60297465129a2cee8ca6/src/input.ts)
+- Native IME and touch use host events with transaction comparisons in the differential suite. [Upstream View input](https://code.haverbeke.berlin/prosemirror/prosemirror-view/src/commit/2a07ebc03ccfb526b43e60297465129a2cee8ca6/src/input.ts)
 
 ## Verification
 
