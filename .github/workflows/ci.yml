@@ -68,3 +68,24 @@ jobs:
       - name: Cargo Clippy
         if: ${{ !cancelled() }}
         run: cargo clippy --workspace --all-targets -- -D warnings
+
+  browser:
+    name: Browser view (Chrome)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy
+
+      - uses: taiki-e/install-action@wasm-pack
+
+      - name: Check the browser view
+        run: cargo clippy -p prosemirror-view --target wasm32-unknown-unknown --test browser -- -D warnings
+
+      - name: Run the Rust browser tests
+        run: |
+          export CHROMEDRIVER="$CHROMEWEBDRIVER/chromedriver"
+          wasm-pack test --headless --chrome crates/prosemirror-view --test browser

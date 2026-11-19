@@ -1,6 +1,7 @@
 use std::any::Any;
 use std::collections::HashMap;
 use std::sync::Arc;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
@@ -34,9 +35,7 @@ impl Transaction {
             stored_marks: None,
             meta: HashMap::new(),
             typed_meta: HashMap::new(),
-            time: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_or(0, |duration| duration.as_millis() as u64),
+            time: transaction_time(),
             initial_selection: selection.clone(),
             selection_origin: selection,
             selection_index: 0,
@@ -436,4 +435,15 @@ impl Transaction {
             self.set_selection(Selection::near(&pos, bias));
         }
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn transaction_time() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_millis() as u64)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn transaction_time() -> u64 {
+    js_sys::Date::now() as u64
 }

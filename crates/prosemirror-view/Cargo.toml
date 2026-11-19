@@ -3,7 +3,7 @@ name = "prosemirror-view"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-description = "Native ProseMirror view controller, decorations, clipboard, layout, and input"
+description = "ProseMirror view controllers, decorations, clipboard, layout, and input"
 
 [dependencies]
 prosemirror-model = { workspace = true }
@@ -13,7 +13,22 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 unicode-segmentation = { workspace = true }
 
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = [
+    "Attr", "ClipboardEvent", "Comment", "CompositionEvent", "CssStyleDeclaration", "DataTransfer",
+    "Document", "DocumentFragment", "DomRect", "DomRectList", "DomTokenList", "DragEvent",
+    "Element", "Event", "EventTarget", "FocusEvent", "FocusOptions", "HtmlElement",
+    "HtmlTemplateElement", "InputEvent", "KeyboardEvent", "KeyboardEventInit", "MouseEvent", "MutationObserver",
+    "MutationObserverInit", "MutationRecord", "NamedNodeMap", "Navigator", "Node", "NodeList",
+    "Range", "Selection", "ShadowRoot", "Text", "VisualViewport", "Window", "console",
+] }
+
 [dev-dependencies]
 prosemirror-schema-basic.workspace = true
 prosemirror-schema-list.workspace = true
 prosemirror-test-builder.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"

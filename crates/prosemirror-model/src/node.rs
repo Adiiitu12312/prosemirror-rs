@@ -289,6 +289,11 @@ impl Fragment {
 }
 
 impl Node {
+    /// Whether two nodes share the same persistent allocation.
+    pub fn ptr_eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+
     pub fn new(
         type_name: impl Into<String>,
         attrs: Option<Value>,
