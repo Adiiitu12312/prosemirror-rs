@@ -3,7 +3,7 @@ use std::sync::{Arc, Weak};
 
 use serde_json::{Map, Value};
 
-use crate::{ContentMatch, DomParseRule, Fragment, Mark, MarkToDom, ModelError, Node, NodeToDom, Slice};
+use crate::{ContentMatch, DomParseRule, Fragment, Mark, MarkToDom, ModelError, Node, NodeToDom, OrderedMap, Slice};
 
 #[derive(Clone, Debug, Default)]
 pub struct AttributeSpec {
@@ -378,8 +378,8 @@ pub struct Schema {
 struct SchemaInner {
     nodes: HashMap<String, NodeType>,
     marks: HashMap<String, MarkType>,
-    node_order: Vec<String>,
-    mark_order: Vec<String>,
+    node_specs: OrderedMap<NodeSpec>,
+    mark_specs: OrderedMap<MarkSpec>,
     top_node_type: String,
     linebreak_replacement: Option<String>,
 }
@@ -407,11 +407,20 @@ impl Schema {
         marks: Vec<(String, MarkSpec)>,
         top_node: Option<&str>,
     ) -> Result<Self, ModelError> {
+        Self::from_ordered_maps(nodes.into(), marks.into(), top_node)
+    }
+
+    /// Compiles a schema using the supplied node and mark order.
+    pub fn from_ordered_maps(
+        nodes: OrderedMap<NodeSpec>,
+        marks: OrderedMap<MarkSpec>,
+        top_node: Option<&str>,
+    ) -> Result<Self, ModelError> {
         let top_node = top_node.unwrap_or("doc");
-        if !nodes.iter().any(|(name, _)| name == top_node) {
+        if nodes.get(top_node).is_none() {
             return Err(ModelError::InvalidSchema(format!("Missing top node type '{top_node}'")));
         }
-        let Some((_, text)) = nodes.iter().find(|(name, _)| name == "text") else {
+        let Some(text) = nodes.get("text") else {
             return Err(ModelError::InvalidSchema("Every schema needs a 'text' type".to_owned()));
         };
         if !text.attrs.is_empty() {
@@ -419,7 +428,7 @@ impl Schema {
         }
         let mut mark_types = HashMap::new();
         for (rank, (name, spec)) in marks.iter().enumerate() {
-            if nodes.iter().any(|(node, _)| node == name) {
+            if nodes.get(name).is_some() {
                 return Err(ModelError::InvalidSchema(format!("{name} is both a node and a mark")));
             }
             let mut mark_type = MarkType::new(name, spec.clone());
@@ -427,13 +436,13 @@ impl Schema {
                 mark_type.excluded = gather_marks(excluded, &marks)?;
             }
             mark_type.rank = rank;
-            mark_types.insert(name.clone(), mark_type);
+            mark_types.insert(name.to_owned(), mark_type);
         }
 
         let mut content_matches = HashMap::<&str, ContentMatch>::new();
         let mut node_types = HashMap::new();
         let mut linebreak_replacement = None;
-        for (name, spec) in &nodes {
+        for (name, spec) in nodes.iter() {
             let expression = spec.content.as_deref().unwrap_or_default();
             let mut node_type = NodeType::new(name, spec.clone());
             node_type.content_match = if let Some(matched) = content_matches.get(expression) {
@@ -455,9 +464,9 @@ impl Schema {
                         "Linebreak replacement must be a unique inline leaf node".to_owned(),
                     ));
                 }
-                linebreak_replacement = Some(name.clone());
+                linebreak_replacement = Some(name.to_owned());
             }
-            node_types.insert(name.clone(), node_type);
+            node_types.insert(name.to_owned(), node_type);
         }
 
         drop(content_matches);
@@ -468,8 +477,8 @@ impl Schema {
             SchemaInner {
                 nodes: node_types,
                 marks: mark_types,
-                node_order: nodes.into_iter().map(|(name, _)| name).collect(),
-                mark_order: marks.into_iter().map(|(name, _)| name).collect(),
+                node_specs: nodes,
+                mark_specs: marks,
                 top_node_type: top_node.to_owned(),
                 linebreak_replacement,
             }
@@ -489,11 +498,19 @@ impl Schema {
     }
 
     pub fn node_types(&self) -> impl Iterator<Item = &NodeType> {
-        self.inner.node_order.iter().map(|name| &self.inner.nodes[name])
+        self.node_specs().iter().map(|(name, _)| &self.inner.nodes[name])
     }
 
     pub fn mark_types(&self) -> impl Iterator<Item = &MarkType> {
-        self.inner.mark_order.iter().map(|name| &self.inner.marks[name])
+        self.mark_specs().iter().map(|(name, _)| &self.inner.marks[name])
+    }
+
+    pub fn node_specs(&self) -> &OrderedMap<NodeSpec> {
+        &self.inner.node_specs
+    }
+
+    pub fn mark_specs(&self) -> &OrderedMap<MarkSpec> {
+        &self.inner.mark_specs
     }
 
     pub fn top_node_type(&self) -> &NodeType {
@@ -596,17 +613,17 @@ impl Schema {
     }
 }
 
-fn gather_marks(expr: &str, specs: &[(String, MarkSpec)]) -> Result<HashSet<String>, ModelError> {
+fn gather_marks(expr: &str, specs: &OrderedMap<MarkSpec>) -> Result<HashSet<String>, ModelError> {
     let mut result = HashSet::new();
     for token in expr.split_whitespace() {
-        if specs.iter().any(|(name, _)| name == token) {
+        if specs.get(token).is_some() {
             result.insert(token.to_owned());
             continue;
         }
         let mut found = token == "_";
-        for (name, spec) in specs {
+        for (name, spec) in specs.iter() {
             if token == "_" || spec.group.as_deref().is_some_and(|groups| groups.split_whitespace().any(|group| group == token)) {
-                result.insert(name.clone());
+                result.insert(name.to_owned());
                 found = true;
             }
         }

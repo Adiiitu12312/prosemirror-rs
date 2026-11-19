@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
-use crate::{Fragment, ModelError, NodeSpec, Schema};
+use crate::{Fragment, ModelError, NodeSpec, OrderedMap, Schema};
 
 #[derive(Clone, Debug)]
 pub struct ContentMatch {
@@ -35,7 +35,7 @@ impl ContentMatch {
 
     pub(crate) fn parse(
         source: &str,
-        types: &[(String, NodeSpec)],
+        types: &OrderedMap<NodeSpec>,
     ) -> Result<Self, ModelError> {
         let mut parser = Parser::new(source, types);
         if parser.next().is_none() {
@@ -254,11 +254,11 @@ struct Parser<'a> {
     tokens: Vec<&'a str>,
     index: usize,
     inline: Option<bool>,
-    types: &'a [(String, NodeSpec)],
+    types: &'a OrderedMap<NodeSpec>,
 }
 
 impl<'a> Parser<'a> {
-    fn new(source: &'a str, types: &'a [(String, NodeSpec)]) -> Self {
+    fn new(source: &'a str, types: &'a OrderedMap<NodeSpec>) -> Self {
         let mut tokens = Vec::new();
         let mut start = None;
         for (index, ch) in source.char_indices() {
@@ -371,7 +371,7 @@ impl<'a> Parser<'a> {
             return Err(self.error(&format!("Unexpected token '{name}'")));
         }
         self.index += 1;
-        let named = self.types.iter().find(|(kind, _)| kind == name);
+        let named = self.types.get(name).map(|spec| (name, spec));
         let types = match named {
             Some(item) => vec![item],
             None => self
@@ -395,7 +395,7 @@ impl<'a> Parser<'a> {
             }
             self.inline = Some(inline);
             expressions.push(Expr::Name(Label {
-                name: name.clone(),
+                name: name.to_owned(),
                 inline,
                 generatable: name != "text" && !spec.has_required_attrs(),
             }));

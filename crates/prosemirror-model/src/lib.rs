@@ -6,6 +6,7 @@ pub mod error;
 mod from_dom;
 pub mod mark;
 pub mod node;
+pub mod ordered_map;
 pub mod replace;
 pub mod resolved_pos;
 pub mod schema;
@@ -20,6 +21,7 @@ pub use from_dom::{
 };
 pub use mark::Mark;
 pub use node::{slice_utf16, Fragment, Node, NodeInner};
+pub use ordered_map::OrderedMap;
 pub use replace::{replace, replace_at_pos};
 pub use resolved_pos::{NodeRange, PathEntry, ResolvedPos};
 pub use schema::{AttributeSpec, MarkSpec, MarkType, NodeSpec, NodeType, Schema};
