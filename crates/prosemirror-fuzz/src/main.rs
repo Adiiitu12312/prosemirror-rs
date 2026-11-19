@@ -107,7 +107,7 @@ fn main() {
         }
 
         passed += 1;
-        if i % 25 == 0 {
+        if i.is_multiple_of(25) {
             println!("  Fuzzed {}/{} cases successfully", i, iterations);
         }
     }

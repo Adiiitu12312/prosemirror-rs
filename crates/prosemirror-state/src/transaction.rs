@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -5,6 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::Value;
 use prosemirror_model::{Fragment, Mark, Node, Slice};
 use prosemirror_transform::{Mapping, MarkFilter, Step, StepResult, Transform};
+use crate::plugin::ErasedValue;
 use crate::selection::Selection;
 
 #[derive(Clone, Debug)]
@@ -13,6 +15,7 @@ pub struct Transaction {
     pub selection: Selection,
     pub stored_marks: Option<Vec<Mark>>,
     pub meta: HashMap<String, Value>,
+    typed_meta: HashMap<String, ErasedValue>,
     pub time: u64,
     initial_selection: Selection,
     selection_origin: Selection,
@@ -30,6 +33,7 @@ impl Transaction {
             selection: selection.clone(),
             stored_marks: None,
             meta: HashMap::new(),
+            typed_meta: HashMap::new(),
             time: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map_or(0, |duration| duration.as_millis() as u64),
@@ -145,7 +149,9 @@ impl Transaction {
     }
 
     pub fn set_meta(&mut self, key: impl Into<String>, value: Value) -> &mut Self {
-        self.meta.insert(key.into(), value);
+        let key = key.into();
+        self.typed_meta.remove(&key);
+        self.meta.insert(key, value);
         self
     }
 
@@ -153,8 +159,23 @@ impl Transaction {
         self.meta.get(key.as_ref())
     }
 
+    pub fn set_typed_meta<T: Any + Send + Sync>(
+        &mut self,
+        key: impl Into<String>,
+        value: T,
+    ) -> &mut Self {
+        let key = key.into();
+        self.meta.remove(&key);
+        self.typed_meta.insert(key, Arc::new(value));
+        self
+    }
+
+    pub fn get_typed_meta<T: Any + Send + Sync>(&self, key: impl AsRef<str>) -> Option<&T> {
+        self.typed_meta.get(key.as_ref())?.downcast_ref()
+    }
+
     pub fn is_generic(&self) -> bool {
-        self.meta.is_empty() && self.appended_transaction.is_none()
+        self.meta.is_empty() && self.typed_meta.is_empty() && self.appended_transaction.is_none()
     }
 
     pub fn appended_transaction(&self) -> Option<&Transaction> {

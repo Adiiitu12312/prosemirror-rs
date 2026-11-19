@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -5,7 +6,7 @@ use prosemirror_model::{Mark, ModelError, Node, Schema};
 use serde::{Serialize, Serializer};
 use serde_json::Value;
 
-use crate::plugin::Plugin;
+use crate::plugin::{ErasedValue, Plugin};
 use crate::selection::Selection;
 use crate::transaction::Transaction;
 
@@ -17,6 +18,7 @@ pub struct EditorState {
     pub schema: Schema,
     pub plugins: Vec<Plugin>,
     pub plugin_states: HashMap<String, Value>,
+    typed_plugin_states: HashMap<String, ErasedValue>,
     pub scroll_to_selection: usize,
 }
 
@@ -64,24 +66,28 @@ impl EditorState {
             schema,
             plugins: config.plugins.clone(),
             plugin_states: HashMap::new(),
+            typed_plugin_states: HashMap::new(),
             scroll_to_selection: 0,
         };
         for plugin in &state.plugins {
-            let Some(field) = &plugin.field else {
-                continue;
-            };
-            let serialized = plugin_json.and_then(|(json, fields)| {
-                fields
-                    .iter()
-                    .find(|(_, candidate)| candidate.key == plugin.key)
-                    .and_then(|(property, _)| json.get(*property))
-            });
-            let value = if let Some(value) = serialized {
-                field.deserialize_with_state(&config, value, &state)
-            } else {
-                field.init_with_state(&config, &state)
-            };
-            state.plugin_states.insert(plugin.key.name.clone(), value);
+            if let Some(field) = &plugin.field {
+                let serialized = plugin_json.and_then(|(json, fields)| {
+                    fields
+                        .iter()
+                        .find(|(_, candidate)| candidate.key == plugin.key)
+                        .and_then(|(property, _)| json.get(*property))
+                });
+                let value = if let Some(value) = serialized {
+                    field.deserialize_with_state(&config, value, &state)
+                } else {
+                    field.init_with_state(&config, &state)
+                };
+                state.plugin_states.insert(plugin.key.name.clone(), value);
+            }
+            if let Some(field) = &plugin.typed_field {
+                let value = field.init(&config, &state);
+                state.typed_plugin_states.insert(plugin.key.name.clone(), value);
+            }
         }
         Ok(state)
     }
@@ -172,6 +178,7 @@ impl EditorState {
             schema: self.schema.clone(),
             plugins: self.plugins.clone(),
             plugin_states: HashMap::new(),
+            typed_plugin_states: HashMap::new(),
             scroll_to_selection: self.scroll_to_selection + tr.scrolled_into_view() as usize,
         };
         for plugin in &self.plugins {
@@ -179,6 +186,12 @@ impl EditorState {
                 let prev = plugin.get_state(self).unwrap_or(&Value::Null);
                 let next = field.apply_with_state(tr, prev, self, &state);
                 state.plugin_states.insert(plugin.key.name.clone(), next);
+            }
+            if let Some(field) = &plugin.typed_field {
+                let prev = self.typed_plugin_states.get(&plugin.key.name)
+                    .expect("initialized plugin state");
+                let next = field.apply(tr, prev, self, &state);
+                state.typed_plugin_states.insert(plugin.key.name.clone(), next);
             }
         }
         state
@@ -196,6 +209,7 @@ impl EditorState {
         let mut state = Self {
             plugins,
             plugin_states: HashMap::new(),
+            typed_plugin_states: HashMap::new(),
             ..self.clone()
         };
         for plugin in &state.plugins {
@@ -205,6 +219,13 @@ impl EditorState {
                     .cloned()
                     .unwrap_or_else(|| field.init_with_state(&config, &state));
                 state.plugin_states.insert(plugin.key.name.clone(), value);
+            }
+            if let Some(field) = &plugin.typed_field {
+                let value = self.typed_plugin_states.get(&plugin.key.name)
+                    .filter(|value| field.accepts(value))
+                    .cloned()
+                    .unwrap_or_else(|| field.init(&config, &state));
+                state.typed_plugin_states.insert(plugin.key.name.clone(), value);
             }
         }
         Ok(state)
@@ -221,6 +242,13 @@ impl EditorState {
                 }
             })
         })
+    }
+
+    pub fn get_typed_plugin_state<T: Any + Send + Sync>(
+        &self,
+        key: impl AsRef<str>,
+    ) -> Option<&T> {
+        self.typed_plugin_states.get(key.as_ref())?.downcast_ref()
     }
 
     pub fn to_json(&self) -> Value {

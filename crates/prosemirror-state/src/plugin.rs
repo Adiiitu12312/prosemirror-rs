@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -84,6 +85,56 @@ pub trait StateField: Send + Sync {
     }
 }
 
+/// A plugin field that holds Rust values such as callbacks or persistent view data.
+pub trait TypedStateField: Send + Sync {
+    type Value: Any + Send + Sync;
+
+    fn init(&self, config: &EditorStateConfig, state: &EditorState) -> Self::Value;
+
+    fn apply(
+        &self,
+        tr: &Transaction,
+        value: &Self::Value,
+        old_state: &EditorState,
+        new_state: &EditorState,
+    ) -> Self::Value;
+}
+
+pub(crate) type ErasedValue = Arc<dyn Any + Send + Sync>;
+
+pub(crate) trait ErasedStateField: Send + Sync {
+    fn init(&self, config: &EditorStateConfig, state: &EditorState) -> ErasedValue;
+    fn accepts(&self, value: &ErasedValue) -> bool;
+    fn apply(
+        &self,
+        tr: &Transaction,
+        value: &ErasedValue,
+        old_state: &EditorState,
+        new_state: &EditorState,
+    ) -> ErasedValue;
+}
+
+impl<T: TypedStateField> ErasedStateField for T {
+    fn init(&self, config: &EditorStateConfig, state: &EditorState) -> ErasedValue {
+        Arc::new(TypedStateField::init(self, config, state))
+    }
+
+    fn accepts(&self, value: &ErasedValue) -> bool {
+        value.is::<T::Value>()
+    }
+
+    fn apply(
+        &self,
+        tr: &Transaction,
+        value: &ErasedValue,
+        old_state: &EditorState,
+        new_state: &EditorState,
+    ) -> ErasedValue {
+        let typed = value.downcast_ref::<T::Value>().expect("matching plugin field type");
+        Arc::new(TypedStateField::apply(self, tr, typed, old_state, new_state))
+    }
+}
+
 type FilterTransaction = dyn Fn(&Transaction, &EditorState) -> bool + Send + Sync;
 type AppendTransaction =
     dyn Fn(&[Arc<Transaction>], &EditorState, &EditorState) -> Option<Transaction> + Send + Sync;
@@ -96,6 +147,7 @@ pub struct Plugin {
     pub key: PluginKey,
     pub field: Option<Arc<dyn StateField>>,
     pub spec: HashMap<String, Value>,
+    pub(crate) typed_field: Option<Arc<dyn ErasedStateField>>,
     pub(crate) filter_transaction: Option<Arc<FilterTransaction>>,
     pub(crate) append_transaction: Option<Arc<AppendTransaction>>,
     text_input: Option<Arc<TextInput>>,
@@ -109,6 +161,7 @@ impl Plugin {
             key,
             field,
             spec: HashMap::new(),
+            typed_field: None,
             filter_transaction: None,
             append_transaction: None,
             text_input: None,
@@ -119,6 +172,11 @@ impl Plugin {
 
     pub fn unkeyed(field: Option<Arc<dyn StateField>>) -> Self {
         Self::new(PluginKey::new("plugin"), field)
+    }
+
+    pub fn with_typed_state_field(mut self, field: impl TypedStateField + 'static) -> Self {
+        self.typed_field = Some(Arc::new(field));
+        self
     }
 
     pub fn with_filter_transaction(

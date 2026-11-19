@@ -1,0 +1,15 @@
+[package]
+name = "prosemirror-tables"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Table schema and grid mapping for ProseMirror documents"
+
+[dependencies]
+prosemirror-model.workspace = true
+prosemirror-state.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+prosemirror-schema-basic.workspace = true

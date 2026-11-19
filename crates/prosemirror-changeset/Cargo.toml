@@ -1,0 +1,15 @@
+[package]
+name = "prosemirror-changeset"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ProseMirror change tracking, metadata spans, and document diffs"
+
+[dependencies]
+prosemirror-model.workspace = true
+prosemirror-transform.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+prosemirror-schema-basic.workspace = true
+serde_json.workspace = true

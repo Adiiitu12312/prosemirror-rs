@@ -9,6 +9,7 @@ use crate::{ContentMatch, DomParseRule, Fragment, Mark, MarkToDom, ModelError, N
 pub struct AttributeSpec {
     pub default: Option<Value>,
     pub validate: Option<String>,
+    pub validate_with: Option<fn(&Value) -> bool>,
 }
 
 impl AttributeSpec {
@@ -16,6 +17,7 @@ impl AttributeSpec {
         Self {
             default,
             validate: validate.map(str::to_owned),
+            validate_with: None,
         }
     }
 
@@ -25,6 +27,11 @@ impl AttributeSpec {
 
     pub fn required() -> Self {
         Self::default()
+    }
+
+    pub fn with_validator(mut self, validate: fn(&Value) -> bool) -> Self {
+        self.validate_with = Some(validate);
+        self
     }
 }
 
@@ -44,6 +51,7 @@ pub struct NodeSpec {
     pub defining_as_context: bool,
     pub defining_for_content: bool,
     pub isolating: bool,
+    pub table_role: Option<String>,
     pub linebreak_replacement: bool,
     pub allow_gap_cursor: Option<bool>,
     pub create_gap_cursor: bool,
@@ -70,6 +78,7 @@ impl Default for NodeSpec {
             defining_as_context: false,
             defining_for_content: false,
             isolating: false,
+            table_role: None,
             linebreak_replacement: false,
             allow_gap_cursor: None,
             create_gap_cursor: false,
@@ -645,6 +654,11 @@ pub(crate) fn check_attrs(
                 return Err(ModelError::InvalidAttributes(format!(
                     "Expected value of type {allowed} for attribute {attribute} on type {name}, got {kind}"
                 )));
+            }
+        }
+        if let Some(validate) = spec.validate_with {
+            if !attrs.and_then(|values| values.get(attribute)).is_some_and(validate) {
+                return Err(ModelError::InvalidAttributes(format!("Invalid value for attribute {attribute} on type {name}")));
             }
         }
     }

@@ -36,10 +36,10 @@ impl RandomGen {
 
     pub fn random_marks(&mut self) -> Vec<Mark> {
         let mut marks = Vec::new();
-        if self.next_u32() % 3 == 0 {
+        if self.next_u32().is_multiple_of(3) {
             marks.push(test_schema().mark_type("em").unwrap().create(None));
         }
-        if self.next_u32() % 4 == 0 {
+        if self.next_u32().is_multiple_of(4) {
             marks.push(test_schema().mark_type("strong").unwrap().create(None));
         }
         marks
@@ -87,7 +87,7 @@ impl RandomGen {
             0 => {
                 // Replace / Insert / Delete
                 let word = self.random_word();
-                let slice = if self.next_u32() % 3 == 0 {
+                let slice = if self.next_u32().is_multiple_of(3) {
                     Slice::empty()
                 } else {
                     Slice::new(

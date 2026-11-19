@@ -9,12 +9,14 @@ pub struct OracleRequest {
     pub step: Value,
 }
 
+type MappedPosition = (usize, bool, bool, bool, bool);
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct OracleResponse {
     pub success: bool,
     pub doc: Option<Value>,
     pub step_map: Option<Vec<usize>>,
-    pub positions: Option<Vec<(usize, bool, bool, bool, bool)>>,
+    pub positions: Option<Vec<MappedPosition>>,
     pub inverse: Option<Value>,
     pub undone: Option<Value>,
     pub error: Option<String>,

@@ -9,5 +9,4 @@ description = "Pure Rust editing commands and base keymap matching ProseMirror c
 prosemirror-model = { workspace = true }
 prosemirror-transform = { workspace = true }
 prosemirror-state = { workspace = true }
-prosemirror-history = { workspace = true }
 serde_json = { workspace = true }
