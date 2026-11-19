@@ -150,7 +150,7 @@ impl<'a> Fitter<'a> {
                                 false
                             }
                         }
-                        (false, None) => parent.is_some_and(|node| compatible(&frontier.node, node)),
+                        (false, None) => parent.is_some_and(|node| frontier.node.compatible_content(node)),
                         (true, Some(first)) => {
                             if let Some(found) = frontier.matched.find_wrapping(self.schema, first.type_name()) {
                                 wrappers = found;
@@ -209,7 +209,7 @@ impl<'a> Fitter<'a> {
             self.close_frontier_node()?;
         }
         for wrapper in fit.wrappers {
-            let node = self.schema.node_type(&wrapper)?.create(None, None, None);
+            let node = self.schema.node_type(&wrapper)?.try_create(None, None, None).ok()?;
             self.open_frontier_node(node)?;
         }
 
@@ -323,7 +323,7 @@ impl<'a> Fitter<'a> {
     ) -> Option<Fragment> {
         let node = to.node(depth);
         let index = if open { to.index_after(depth) } else { to.index(depth) };
-        if index == node.child_count() && !compatible(&frontier.node, node) {
+        if index == node.child_count() && !frontier.node.compatible_content(node) {
             return None;
         }
         if node.content().children[index..].iter().any(|child| {
@@ -373,12 +373,6 @@ pub(crate) fn singleton(node: Node) -> Fragment {
     Fragment::from_nodes(vec![node])
 }
 
-pub(crate) fn compatible(left: &Node, right: &Node) -> bool {
-    left.type_name() == right.type_name()
-        || left.content_match_at(0).zip(right.content_match_at(0))
-            .is_some_and(|(left, right)| left.compatible(&right))
-}
-
 fn content_at(mut fragment: &Fragment, depth: usize) -> Option<&Fragment> {
     for _ in 0..depth {
         fragment = fragment.children.first()?.content();
@@ -388,7 +382,8 @@ fn content_at(mut fragment: &Fragment, depth: usize) -> Option<&Fragment> {
 
 fn drop_from_fragment(fragment: &Fragment, depth: usize, count: usize) -> Option<Fragment> {
     if depth == 0 {
-        return Some(Fragment::from_nodes(fragment.children.get(count..)?.to_vec()));
+        return (count <= fragment.child_count())
+            .then(|| fragment.cut_by_index(count, fragment.child_count()));
     }
     let first = fragment.children.first()?;
     let child = first.copy(Some(drop_from_fragment(first.content(), depth - 1, count)?));
@@ -503,8 +498,8 @@ pub(crate) fn replace_range(transform: &mut Transform, from: usize, to: usize, s
             if parent.can_replace_with(index, index, insert.type_name(), insert.marks()) {
                 if let Some(content) = close_fragment(&slice.content, 0, slice.open_start, open_depth, parent) {
                     transform.replace(
-                        before(&start, depth),
-                        if target > 0 { after(&end, depth) } else { to },
+                        start.before(depth),
+                        if target > 0 { end.after(depth) } else { to },
                         Slice::new(content, open_depth, slice.open_end),
                     );
                     return;
@@ -521,8 +516,8 @@ pub(crate) fn replace_range(transform: &mut Transform, from: usize, to: usize, s
             break;
         }
         if target > 0 {
-            from = before(&start, target as usize);
-            to = after(&end, target as usize);
+            from = start.before(target as usize);
+            to = end.after(target as usize);
         }
     }
 }
@@ -569,14 +564,6 @@ pub(crate) fn delete_range(transform: &mut Transform, from: usize, to: usize) {
         }
     }
     transform.delete(from, to);
-}
-
-pub(crate) fn before(pos: &ResolvedPos, depth: usize) -> usize {
-    if depth > pos.depth { pos.pos } else { pos.before(depth) }
-}
-
-pub(crate) fn after(pos: &ResolvedPos, depth: usize) -> usize {
-    if depth > pos.depth { pos.pos } else { pos.after(depth) }
 }
 
 fn covered_depths(from: &ResolvedPos, to: &ResolvedPos) -> Vec<usize> {

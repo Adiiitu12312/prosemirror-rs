@@ -12,3 +12,8 @@ prosemirror-state = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 unicode-segmentation = { workspace = true }
+
+[dev-dependencies]
+prosemirror-schema-basic.workspace = true
+prosemirror-schema-list.workspace = true
+prosemirror-test-builder.workspace = true

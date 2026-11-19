@@ -53,8 +53,9 @@ jobs:
       - name: Run Documentation Tests
         run: cargo test --workspace --doc
 
-      - name: Cargo Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
-
       - name: Run ProseMirror Differential Fuzzer
         run: cargo run --bin prosemirror-fuzz -- --iterations 200 --oracle oracle/server.js
+
+      - name: Cargo Clippy
+        if: ${{ !cancelled() }}
+        run: cargo clippy --workspace --all-targets -- -D warnings

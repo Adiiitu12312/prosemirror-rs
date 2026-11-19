@@ -64,7 +64,10 @@ impl StepMap {
     }
 
     pub fn new_inverted(ranges: Vec<usize>, inverted: bool) -> Self {
-        assert_eq!(ranges.chunks_exact(3).remainder().len(), 0, "Ranges must be multiple of 3");
+        assert!(
+            ranges.as_chunks::<3>().1.is_empty(),
+            "Ranges must be multiple of 3"
+        );
         let inverted = inverted && !ranges.is_empty();
         Self { ranges, inverted }
     }
@@ -94,7 +97,7 @@ impl StepMap {
 
     pub fn for_each(&self, mut visit: impl FnMut(usize, usize, usize, usize)) {
         let mut diff = 0;
-        for range in self.ranges.chunks_exact(3) {
+        for range in self.ranges.as_chunks::<3>().0 {
             let start = range[0] as isize;
             let (old_start, new_start, old_size, new_size) = if self.inverted {
                 (start - diff, start, range[2], range[1])

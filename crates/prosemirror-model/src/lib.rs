@@ -1,14 +1,18 @@
 pub mod content;
 mod diff;
+pub mod dom;
 pub mod error;
+mod from_dom;
 pub mod mark;
 pub mod node;
 pub mod replace;
 pub mod resolved_pos;
 pub mod schema;
 pub mod slice;
+mod to_dom;
 
 pub use error::ModelError;
+pub use from_dom::{DomParseOptions, DomParseRule, DomParser, DomPosition, DomRuleKind, ParseAttrs, Whitespace};
 pub use mark::Mark;
 pub use node::{slice_utf16, Fragment, Node, NodeInner};
 pub use replace::{replace, replace_at_pos};
@@ -17,3 +21,5 @@ pub use schema::{AttributeSpec, MarkSpec, MarkType, NodeSpec, NodeType, Schema};
 pub use slice::Slice;
 pub use content::ContentMatch;
 pub use diff::DiffEnd;
+pub use dom::{DomAttribute, DomElement, DomNode};
+pub use to_dom::{DomOutputSpec, DomSerializer, MarkToDom, NodeToDom, RenderedDom};

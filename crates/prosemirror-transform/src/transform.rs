@@ -87,6 +87,7 @@ impl Transform {
     }
 
     pub fn remove_mark(&mut self, from: usize, to: usize, mark: Mark) -> &mut Self {
+        let mark = mark::bind_mark(&self.doc, &mark);
         self.remove_marks(from, to, mark::MarkFilter::Exact(&mark))
     }
 
@@ -169,7 +170,7 @@ impl Transform {
     }
 
     pub fn remove_node_mark_type(&mut self, pos: usize, type_name: &str) -> &mut Self {
-        if let Some(mark) = crate::step::node_at(&self.doc, pos)
+        if let Some(mark) = self.doc.node_at(pos)
             .and_then(|node| node.marks().iter().find(|mark| mark.type_name == type_name)).cloned()
         {
             self.remove_node_mark(pos, mark);

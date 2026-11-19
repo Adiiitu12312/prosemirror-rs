@@ -116,6 +116,22 @@ impl ContentMatch {
             .any(|(label, _)| other.match_type(&label.name).is_some())
     }
 
+    pub(crate) fn can_match_anywhere(&self, name: &str) -> bool {
+        let mut todo = vec![self.index];
+        let mut seen = HashSet::new();
+        while let Some(index) = todo.pop() {
+            if seen.insert(index) {
+                for (label, next) in &self.states[index].edges {
+                    if label.name == name {
+                        return true;
+                    }
+                    todo.push(*next);
+                }
+            }
+        }
+        false
+    }
+
     pub fn fill_before(
         &self,
         schema: &Schema,

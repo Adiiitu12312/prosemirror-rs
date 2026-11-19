@@ -21,6 +21,7 @@ pub struct Mark {
 struct MarkRules {
     rank: usize,
     inclusive: bool,
+    spanning: bool,
     excluded: HashSet<String>,
 }
 
@@ -46,6 +47,7 @@ impl Mark {
             rules: Some(Arc::new(MarkRules {
                 rank: mark_type.rank,
                 inclusive: mark_type.spec.inclusive,
+                spanning: mark_type.spec.spanning,
                 excluded: mark_type.excluded.clone(),
             })),
         }
@@ -53,6 +55,10 @@ impl Mark {
 
     pub fn is_inclusive(&self) -> bool {
         self.rules.as_ref().map_or(self.type_name != "link", |rules| rules.inclusive)
+    }
+
+    pub fn is_spanning(&self) -> bool {
+        self.rules.as_ref().is_none_or(|rules| rules.spanning)
     }
 
     fn excludes(&self, other: &Self) -> bool {

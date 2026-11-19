@@ -3,7 +3,7 @@ use std::sync::{Arc, Weak};
 
 use serde_json::{Map, Value};
 
-use crate::{ContentMatch, Fragment, Mark, ModelError, Node, Slice};
+use crate::{ContentMatch, DomParseRule, Fragment, Mark, MarkToDom, ModelError, Node, NodeToDom, Slice};
 
 #[derive(Clone, Debug, Default)]
 pub struct AttributeSpec {
@@ -47,6 +47,8 @@ pub struct NodeSpec {
     pub linebreak_replacement: bool,
     pub leaf_text: Option<fn(&Node) -> String>,
     pub to_debug_string: Option<fn(&Node) -> String>,
+    pub parse_dom: Vec<DomParseRule>,
+    pub to_dom: Option<NodeToDom>,
 }
 
 impl Default for NodeSpec {
@@ -69,6 +71,8 @@ impl Default for NodeSpec {
             linebreak_replacement: false,
             leaf_text: None,
             to_debug_string: None,
+            parse_dom: Vec::new(),
+            to_dom: None,
         }
     }
 }
@@ -88,6 +92,8 @@ pub struct MarkSpec {
     pub excludes: Option<String>,
     pub group: Option<String>,
     pub spanning: bool,
+    pub parse_dom: Vec<DomParseRule>,
+    pub to_dom: Option<MarkToDom>,
 }
 
 impl Default for MarkSpec {
@@ -99,6 +105,8 @@ impl Default for MarkSpec {
             excludes: None,
             group: None,
             spanning: true,
+            parse_dom: Vec::new(),
+            to_dom: None,
         }
     }
 }
@@ -345,6 +353,8 @@ pub struct Schema {
 struct SchemaInner {
     nodes: HashMap<String, NodeType>,
     marks: HashMap<String, MarkType>,
+    node_order: Vec<String>,
+    mark_order: Vec<String>,
     top_node_type: String,
     linebreak_replacement: Option<String>,
 }
@@ -425,6 +435,7 @@ impl Schema {
             node_types.insert(name.clone(), node_type);
         }
 
+        drop(content_matches);
         Ok(Self::from_inner(Arc::new_cyclic(|schema| {
             for node_type in node_types.values_mut() {
                 node_type.schema = schema.clone();
@@ -432,6 +443,8 @@ impl Schema {
             SchemaInner {
                 nodes: node_types,
                 marks: mark_types,
+                node_order: nodes.into_iter().map(|(name, _)| name).collect(),
+                mark_order: marks.into_iter().map(|(name, _)| name).collect(),
                 top_node_type: top_node.to_owned(),
                 linebreak_replacement,
             }
@@ -448,6 +461,14 @@ impl Schema {
 
     pub fn mark_type(&self, name: &str) -> Option<&MarkType> {
         self.inner.marks.get(name)
+    }
+
+    pub fn node_types(&self) -> impl Iterator<Item = &NodeType> {
+        self.inner.node_order.iter().map(|name| &self.inner.nodes[name])
+    }
+
+    pub fn mark_types(&self) -> impl Iterator<Item = &MarkType> {
+        self.inner.mark_order.iter().map(|name| &self.inner.marks[name])
     }
 
     pub fn top_node_type(&self) -> &NodeType {

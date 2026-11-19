@@ -1,0 +1,18 @@
+[package]
+name = "prosemirror-collab"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Collaborative rebasing and step synchronization for ProseMirror"
+
+[dependencies]
+prosemirror-model.workspace = true
+prosemirror-state.workspace = true
+prosemirror-transform.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+prosemirror-history.workspace = true
+prosemirror-test-builder.workspace = true

@@ -2,7 +2,7 @@
 
 use prosemirror_model::{ContentMatch, Fragment, Mark, Node, NodeType, Slice};
 
-use crate::{replace::singleton, step::node_at, Step, Transform};
+use crate::{replace::singleton, Step, Transform};
 
 #[derive(Clone, Copy, Debug, Default)]
 pub enum MarkFilter<'a> {
@@ -12,12 +12,16 @@ pub enum MarkFilter<'a> {
     Exact(&'a Mark),
 }
 
+pub(crate) fn bind_mark(doc: &Node, mark: &Mark) -> Mark {
+    doc.schema().and_then(|schema| schema.mark_type(&mark.type_name))
+        .and_then(|ty| ty.try_create(mark.attrs.clone()).ok()).unwrap_or_else(|| mark.clone())
+}
+
 pub(crate) fn add_mark(transform: &mut Transform, from: usize, to: usize, mark: Mark) {
     if from >= to || to > transform.doc.content().size() {
         return;
     }
-    let mark = transform.doc.schema().and_then(|schema| schema.mark_type(&mark.type_name))
-        .and_then(|ty| ty.try_create(mark.attrs.clone()).ok()).unwrap_or(mark);
+    let mark = bind_mark(&transform.doc, &mark);
     let (mut removed, mut added) = (Vec::new(), Vec::new());
     transform.doc.nodes_between(from, to, |node, pos, parent, _| {
         if !node.is_inline() || mark.is_in_set(node.marks())
@@ -31,7 +35,7 @@ pub(crate) fn add_mark(transform: &mut Transform, from: usize, to: usize, mark: 
         for previous in node.marks() {
             if !previous.is_in_set(&new_set) {
                 if let Some(Step::RemoveMark { to, mark, .. }) = removed.last_mut() {
-                    if *to == start && mark == previous {
+                    if *to == start && *mark == *previous {
                         *to = end;
                         continue;
                     }
@@ -101,7 +105,7 @@ pub(crate) fn clear_incompatible(
     matched: Option<ContentMatch>,
     clear_newlines: bool,
 ) {
-    let Some(node) = node_at(&transform.doc, pos).cloned() else { return };
+    let Some(node) = transform.doc.node_at(pos).cloned() else { return };
     let Some(schema) = transform.doc.schema().cloned() else { return };
     let mut matched = matched.unwrap_or_else(|| parent_type.content_match().clone());
     let mut replacement_steps = Vec::new();

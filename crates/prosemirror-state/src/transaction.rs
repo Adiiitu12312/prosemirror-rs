@@ -94,6 +94,12 @@ impl Transaction {
         self.selection_set
     }
 
+    pub fn set_mapped_selection(&mut self, selection: Selection) -> &mut Self {
+        self.set_selection(selection);
+        self.selection_set = false;
+        self
+    }
+
     pub fn set_stored_marks(&mut self, marks: Option<Vec<Mark>>) -> &mut Self {
         self.stored_marks = marks;
         self.stored_marks_set = true;
@@ -155,7 +161,7 @@ impl Transaction {
         self.appended_transaction.as_deref()
     }
 
-    pub(crate) fn set_appended_transaction(&mut self, root: Arc<Transaction>) {
+    pub fn set_appended_transaction(&mut self, root: Arc<Transaction>) {
         self.appended_transaction = Some(root);
     }
 

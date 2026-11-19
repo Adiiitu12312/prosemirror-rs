@@ -4,19 +4,14 @@ use prosemirror_model::{Fragment, Mark, Node, NodeRange, Slice};
 use serde_json::Value;
 
 use crate::mark::{clear_incompatible, newline_conversion, translate_newlines};
-use crate::replace::{after, before, compatible, singleton};
-use crate::step::node_at;
+use crate::replace::singleton;
 use crate::{Step, Transform};
-
-fn fragment_by_index(node: &Node, from: usize, to: usize) -> Fragment {
-    Fragment::from_nodes(node.content().children[from..to].to_vec())
-}
 
 pub fn lift_target(doc: &Node, range: &NodeRange) -> Option<usize> {
     let from = doc.resolve(range.start).ok()?;
     let to = doc.resolve(range.end).ok()?;
     let parent = from.node(range.depth);
-    let content = fragment_by_index(parent, range.start_index, range.end_index);
+    let content = parent.content().cut_by_index(range.start_index, range.end_index);
     for depth in (0..=range.depth).rev() {
         let node = from.node(depth);
         let index = from.index(depth);
@@ -54,7 +49,7 @@ pub(crate) fn lift(transform: &mut Transform, range: &NodeRange, target: usize) 
         } else {
             start -= 1;
         }
-        if open_end > 0 || after(&to, depth + 1) < to.end(depth) {
+        if open_end > 0 || to.after(depth + 1) < to.end(depth) {
             right = singleton(to.node(depth).copy(Some(right)));
             open_end += 1;
         } else {
@@ -135,7 +130,7 @@ pub fn can_split(doc: &Node, pos: usize, depth: usize, types_after: Option<&[Opt
     let types = types_after.unwrap_or_default();
     let inner = types.last().and_then(Option::as_ref).unwrap_or(parent);
     if !parent.can_replace(index, parent.child_count(), &empty)
-        || !valid_content(inner, &fragment_by_index(parent, index, parent.child_count()))
+        || !valid_content(inner, &parent.content().cut_by_index(index, parent.child_count()))
     {
         return false;
     }
@@ -146,7 +141,7 @@ pub fn can_split(doc: &Node, pos: usize, depth: usize, types_after: Option<&[Opt
         if node.is_isolating() || index >= node.child_count() {
             return false;
         }
-        let mut rest = fragment_by_index(node, index, node.child_count());
+        let mut rest = node.content().cut_by_index(index, node.child_count());
         if let Some(override_node) = types.get(level - base).and_then(Option::as_ref) {
             rest = rest.replace_child(0, override_node.copy(Some(Fragment::empty())));
         }
@@ -194,7 +189,7 @@ fn joinable(left: Option<&Node>, right: Option<&Node>) -> bool {
         return false;
     }
     let Some(mut matched) = left.content_match_at(left.child_count()) else {
-        return compatible(left, right) || (left.is_textblock() && right.is_textblock());
+        return left.can_append(right);
     };
     let linebreak = left.schema().and_then(|schema| schema.linebreak_replacement());
     for child in &right.content().children {
@@ -338,8 +333,8 @@ pub fn drop_point(doc: &Node, pos: usize, slice: &Slice) -> Option<usize> {
             };
             if fits {
                 return Some(match direction {
-                    -1 => before(&resolved, depth + 1),
-                    1 => after(&resolved, depth + 1),
+                    -1 => resolved.before(depth + 1),
+                    1 => resolved.after(depth + 1),
                     _ => pos,
                 });
             }
@@ -361,7 +356,7 @@ pub(crate) fn set_block_type(
             return true;
         }
         let Ok(updated) = target.try_create(attrs, None, Some(node.marks().to_vec())) else { return true };
-        if node.same_markup(&updated) {
+        if node.same_markup(&updated.with_marks(Vec::new())) {
             return true;
         }
         let mapped = transform.mapping.slice(map_from, transform.steps.len()).map(pos, 1);
@@ -390,14 +385,15 @@ pub(crate) fn set_block_type(
 pub(crate) fn set_node_markup(
     transform: &mut Transform, pos: usize, type_name: Option<&str>, attrs: Option<Value>, marks: Option<Vec<Mark>>,
 ) {
-    let Some(node) = node_at(&transform.doc, pos) else { return };
+    let Some(node) = transform.doc.node_at(pos) else { return };
     if node.is_text() {
         return;
     }
     let type_name = type_name.unwrap_or_else(|| node.type_name());
     let marks = marks.unwrap_or_else(|| node.marks().to_vec());
-    let updated = match node.schema().and_then(|schema| schema.node_type(type_name)) {
-        Some(target) => {
+    let updated = match node.schema() {
+        Some(schema) => {
+            let Some(target) = schema.node_type(type_name) else { return };
             let Ok(template) = target.try_create(attrs, None, Some(marks)) else { return };
             template
         }

@@ -16,6 +16,8 @@ pub enum ModelError {
     InvalidAttributes(String),
     #[error("Invalid collection of marks for node {0}")]
     InvalidMarks(String),
+    #[error("DOM error: {0}")]
+    Dom(String),
     #[error("Invalid slice open depths: start {0}, end {1}")]
     InvalidSlice(usize, usize),
     #[error("Replace error: {0}")]

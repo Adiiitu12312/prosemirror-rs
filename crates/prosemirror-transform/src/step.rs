@@ -1,5 +1,7 @@
+//! Atomic edits and step JSON, ported from the upstream step implementations.
+
 use prosemirror_model::{replace_at_pos, Fragment, Mark, ModelError, Node, Schema, Slice};
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::map::{Mappable, StepMap};
@@ -35,7 +37,7 @@ pub enum Step {
     Replace {
         from: usize,
         to: usize,
-        #[serde(default = "Slice::empty", deserialize_with = "deserialize_slice", skip_serializing_if = "empty_slice")]
+        #[serde(default = "Slice::empty", skip_serializing_if = "empty_slice")]
         slice: Slice,
         #[serde(default, skip_serializing_if = "is_false")]
         structure: bool,
@@ -49,7 +51,7 @@ pub enum Step {
         #[serde(rename = "gapTo")]
         gap_to: usize,
         insert: usize,
-        #[serde(default = "Slice::empty", deserialize_with = "deserialize_slice", skip_serializing_if = "empty_slice")]
+        #[serde(default = "Slice::empty", skip_serializing_if = "empty_slice")]
         slice: Slice,
         #[serde(default, skip_serializing_if = "is_false")]
         structure: bool,
@@ -75,10 +77,6 @@ pub enum Step {
         #[serde(default)]
         value: Value,
     },
-}
-
-fn deserialize_slice<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Slice, D::Error> {
-    Ok(Option::<Slice>::deserialize(deserializer)?.unwrap_or_else(Slice::empty))
 }
 
 fn empty_slice(slice: &Slice) -> bool {
@@ -187,29 +185,36 @@ impl Step {
                     None => StepResult::fail("Content does not fit in gap"),
                 }
             }
-            Self::AddMark { from, to, mark } => map_marks(doc, *from, *to, |node, parent| {
-                if node.is_atom() && parent.allows_mark_type(&mark.type_name) {
-                    Mark::add_to_set(node.marks(), mark.clone())
-                } else {
-                    node.marks().to_vec()
-                }
-            }),
+            Self::AddMark { from, to, mark } => {
+                let mark = crate::mark::bind_mark(doc, mark);
+                map_marks(doc, *from, *to, |node, parent| {
+                    if node.is_atom() && parent.allows_mark_type(&mark.type_name) {
+                        Mark::add_to_set(node.marks(), mark.clone())
+                    } else {
+                        node.marks().to_vec()
+                    }
+                })
+            }
             Self::RemoveMark { from, to, mark } => {
-                map_marks(doc, *from, *to, |node, _| remove_exact_mark(node.marks(), mark))
+                let mark = crate::mark::bind_mark(doc, mark);
+                map_marks(doc, *from, *to, |node, _| mark.remove_exact_from_set(node.marks()))
             }
             Self::AddNodeMark { pos, mark } => replace_node_markup(
                 doc, *pos, "No node at mark step's position",
-                |node| node.with_marks(Mark::add_to_set(node.marks(), mark.clone())),
+                |node| Ok(node.with_marks(Mark::add_to_set(node.marks(), crate::mark::bind_mark(doc, mark)))),
             ),
             Self::RemoveNodeMark { pos, mark } => replace_node_markup(
                 doc, *pos, "No node at mark step's position",
-                |node| node.with_marks(remove_exact_mark(node.marks(), mark)),
+                |node| Ok(node.with_marks(crate::mark::bind_mark(doc, mark).remove_exact_from_set(node.marks()))),
             ),
             Self::Attr { pos, attr, value } => replace_node_markup(
                 doc, *pos, "No node at attribute step's position",
                 |node| set_attr(node, attr, value),
             ),
-            Self::DocAttr { attr, value } => StepResult::ok(set_attr(doc, attr, value)),
+            Self::DocAttr { attr, value } => match set_attr(doc, attr, value) {
+                Ok(doc) => StepResult::ok(doc),
+                Err(error) => StepResult::fail(error.to_string()),
+            },
         }
     }
 
@@ -253,8 +258,8 @@ impl Step {
             Self::AddMark { from, to, mark } => Self::remove_mark(*from, *to, mark.clone()),
             Self::RemoveMark { from, to, mark } => Self::add_mark(*from, *to, mark.clone()),
             Self::AddNodeMark { pos, mark } => {
-                if let Some(node) = node_at(doc, *pos) {
-                    let new_set = Mark::add_to_set(node.marks(), mark.clone());
+                if let Some(node) = doc.node_at(*pos) {
+                    let new_set = Mark::add_to_set(node.marks(), crate::mark::bind_mark(doc, mark));
                     if new_set.len() == node.marks().len() {
                         let restore = node.marks().iter().find(|old| !old.is_in_set(&new_set));
                         return Self::add_node_mark(*pos, restore.unwrap_or(mark).clone());
@@ -263,14 +268,15 @@ impl Step {
                 Self::remove_node_mark(*pos, mark.clone())
             }
             Self::RemoveNodeMark { pos, mark } => {
-                if node_at(doc, *pos).is_some_and(|node| mark.is_in_set(node.marks())) {
+                let mark = crate::mark::bind_mark(doc, mark);
+                if doc.node_at(*pos).is_some_and(|node| mark.is_in_set(node.marks())) {
                     Self::add_node_mark(*pos, mark.clone())
                 } else {
                     self.clone()
                 }
             }
             Self::Attr { pos, attr, .. } => {
-                Self::attr(*pos, attr.clone(), old_attr(node_at(doc, *pos), attr))
+                Self::attr(*pos, attr.clone(), old_attr(doc.node_at(*pos), attr))
             }
             Self::DocAttr { attr, .. } => Self::doc_attr(attr.clone(), old_attr(Some(doc), attr)),
         }
@@ -386,38 +392,34 @@ fn content_between(doc: &Node, from: usize, to: usize) -> bool {
     false
 }
 
-pub(crate) fn node_at(mut node: &Node, mut pos: usize) -> Option<&Node> {
-    loop {
-        let (index, offset) = node.content().find_index(pos);
-        node = node.content().children.get(index)?;
-        if offset == pos || node.is_text() {
-            return Some(node);
-        }
-        pos -= offset + 1;
-    }
-}
-
 fn replace_node_markup(
     doc: &Node,
     pos: usize,
     failure: &str,
-    update: impl FnOnce(&Node) -> Node,
+    update: impl FnOnce(&Node) -> Result<Node, ModelError>,
 ) -> StepResult {
-    let Some(node) = node_at(doc, pos) else {
+    let Some(node) = doc.node_at(pos) else {
         return StepResult::fail(failure);
     };
     if node.is_text() {
         return StepResult::fail("Cannot change text node markup with a node step");
     }
-    let updated = update(node).copy(Some(Fragment::empty()));
+    let updated = match update(node) {
+        Ok(updated) => updated.copy(None),
+        Err(error) => return StepResult::fail(error.to_string()),
+    };
     let slice = Slice::new(Fragment::from_nodes(vec![updated]), 0, usize::from(!node.is_leaf()));
     StepResult::from_replace(doc, pos, pos + 1, &slice)
 }
 
-fn set_attr(node: &Node, attr: &str, value: &Value) -> Node {
+fn set_attr(node: &Node, attr: &str, value: &Value) -> Result<Node, ModelError> {
     let mut attrs = node.attrs().and_then(Value::as_object).cloned().unwrap_or_default();
     attrs.insert(attr.to_owned(), value.clone());
-    node.with_attrs(Some(Value::Object(attrs)))
+    let attrs = Some(Value::Object(attrs));
+    let Some(ty) = node.node_type() else {
+        return Ok(node.with_attrs(attrs));
+    };
+    ty.try_create(attrs, Some(node.content().clone()), Some(node.marks().to_vec()))
 }
 
 fn old_attr(node: Option<&Node>, attr: &str) -> Value {
@@ -425,10 +427,6 @@ fn old_attr(node: Option<&Node>, attr: &str) -> Value {
         .and_then(|attrs| attrs.get(attr))
         .cloned()
         .unwrap_or(Value::Null)
-}
-
-fn remove_exact_mark(marks: &[Mark], mark: &Mark) -> Vec<Mark> {
-    marks.iter().filter(|candidate| *candidate != mark).cloned().collect()
 }
 
 fn map_marks(
