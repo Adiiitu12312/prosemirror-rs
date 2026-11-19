@@ -37,7 +37,13 @@ pub fn arrow(
         Axis::Vertical => next_cell(state, cell.pos, axis, direction).map(|pos| Selection::near(&pos, 1))
             .or_else(|| {
                 let depth = cell.depth.checked_sub(1)?;
-                let pos = if bias < 0 { cell.before(depth) } else { cell.after(depth) };
+                let pos = if depth == 0 {
+                    if bias < 0 { 0 } else { state.doc.content().size() }
+                } else if bias < 0 {
+                    cell.before(depth)
+                } else {
+                    cell.after(depth)
+                };
                 state.doc.resolve(pos).ok().map(|p| Selection::near(&p, bias))
             }),
     };

@@ -22,7 +22,7 @@ A Rust port of [ProseMirror](https://prosemirror.net/). The workspace contains t
 | `prosemirror-inputrules` | 1.5.0 | Text input rules, rule builders, and undo |
 | `prosemirror-gapcursor` | 1.4.0 | Gap selection, navigation, and native event hooks |
 | `prosemirror-dropcursor` | 1.8.2 | Drop target mapping, timing, and host-supplied geometry |
-| `prosemirror-tables` | 1.8.5 | Table schema, grid mapping and normalization, and row and column edits |
+| `prosemirror-tables` | 1.8.5 | Table schema, grid mapping, cell selection and editing, clipboard, and column resizing |
 | `prosemirror-changeset` | 2.4.0 | Changed ranges, span merging, token diffs, and change simplification |
 | `prosemirror-markdown` | 1.13.4 | Markdown schema, parsing, and serialization |
 | `prosemirror-search` | 1.1.0 | Query matching, search commands, replacement, and highlights |

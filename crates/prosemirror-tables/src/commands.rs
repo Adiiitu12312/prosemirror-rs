@@ -258,6 +258,30 @@ impl TableEdit {
     }
 }
 
+pub fn add_column_before(state: &EditorState, dispatch: Dispatch<'_>) -> bool {
+    TableEdit::AddColumnBefore.run(state, dispatch)
+}
+
+pub fn add_column_after(state: &EditorState, dispatch: Dispatch<'_>) -> bool {
+    TableEdit::AddColumnAfter.run(state, dispatch)
+}
+
+pub fn delete_column(state: &EditorState, dispatch: Dispatch<'_>) -> bool {
+    TableEdit::DeleteColumns.run(state, dispatch)
+}
+
+pub fn add_row_before(state: &EditorState, dispatch: Dispatch<'_>) -> bool {
+    TableEdit::AddRowBefore.run(state, dispatch)
+}
+
+pub fn add_row_after(state: &EditorState, dispatch: Dispatch<'_>) -> bool {
+    TableEdit::AddRowAfter.run(state, dispatch)
+}
+
+pub fn delete_row(state: &EditorState, dispatch: Dispatch<'_>) -> bool {
+    TableEdit::DeleteRows.run(state, dispatch)
+}
+
 fn at_cell<'a>(table: &'a Node, map: &TableMap, row: usize, col: usize) -> Option<&'a Node> {
     table.node_at(*map.map.get(row * map.width + col)?)
 }

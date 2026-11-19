@@ -212,7 +212,7 @@ impl CellSelection {
         Ok(Slice::new(Fragment::from_nodes(rows), 1, 1))
     }
 
-    pub(crate) fn map(&self, doc: &Node, mapping: &impl Mappable) -> Selection {
+    pub fn map(&self, doc: &Node, mapping: &impl Mappable) -> Selection {
         let anchor = super::selection::resolve_in(doc, mapping.map(self.anchor, 1));
         let head = super::selection::resolve_in(doc, mapping.map(self.head, 1));
         let mapped = Self::create(doc, anchor.pos, head.pos);
@@ -230,13 +230,56 @@ impl CellSelection {
         }
     }
 
+    pub fn bookmark(&self) -> CellBookmark {
+        CellBookmark { anchor: self.anchor, head: self.head }
+    }
+
+    pub fn to_json(&self) -> Value {
+        serde_json::to_value(Selection::Cell(self.clone())).expect("serializable cell selection")
+    }
+
+    pub fn from_json(doc: &Node, json: &Value) -> Result<Self, ModelError> {
+        match Selection::from_json(doc, json)? {
+            Selection::Cell(selection) => Ok(selection),
+            _ => Err(ModelError::Serialization("Expected a cell selection".into())),
+        }
+    }
+
     pub(crate) fn map_bookmark(&self, mapping: &impl Mappable) -> Self {
+        let mapped = self.bookmark().map(mapping);
         Self {
-            anchor: mapping.map(self.anchor, 1),
-            head: mapping.map(self.head, 1),
+            anchor: mapped.anchor,
+            head: mapped.head,
             row: false,
             column: false,
         }
+    }
+}
+
+impl From<CellSelection> for Selection {
+    fn from(selection: CellSelection) -> Self {
+        Self::Cell(selection)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CellBookmark {
+    pub anchor: usize,
+    pub head: usize,
+}
+
+impl CellBookmark {
+    pub fn map(&self, mapping: &impl Mappable) -> Self {
+        Self {
+            anchor: mapping.map(self.anchor, 1),
+            head: mapping.map(self.head, 1),
+        }
+    }
+
+    pub fn resolve(&self, doc: &Node) -> Selection {
+        Selection::cell(doc, self.anchor, self.head).unwrap_or_else(|_| {
+            Selection::near(&super::selection::resolve_in(doc, self.head), 1)
+        })
     }
 }
 

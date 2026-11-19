@@ -319,8 +319,7 @@ impl SelectionBookmark {
             }
             Selection::All => Selection::All,
             Selection::GapCursor { pos } => gap_cursor_or_near(&resolve_in(doc, pos)),
-            Selection::Cell(ref cell) => Selection::cell(doc, cell.anchor, cell.head)
-                .unwrap_or_else(|_| Selection::near(&resolve_in(doc, cell.head), 1)),
+            Selection::Cell(ref cell) => cell.bookmark().resolve(doc),
         }
     }
 }

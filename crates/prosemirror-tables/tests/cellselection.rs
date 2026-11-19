@@ -3,7 +3,7 @@ use std::sync::OnceLock;
 
 use prosemirror_model::{AttributeSpec, Schema, Slice};
 use prosemirror_state::{EditorState, EditorStateConfig, Selection};
-use prosemirror_tables::commands::{add_column_after, add_column_before, add_row_after, add_row_before, Dispatch};
+use prosemirror_tables::commands::TableEdit;
 use prosemirror_tables::{
     cell_around, draw_cell_selection, table_editing, table_nodes, CellSelection,
     TableEditingOptions, TableNodesOptions,
@@ -94,13 +94,11 @@ fn grid() -> TaggedDoc {
     node!("doc"; table!(row!(c11(), c11(), c11()), row!(c11(), c11(), c11()), row!(c11(), c11(), c11())))
 }
 
-type Command = for<'a> fn(&EditorState, Dispatch<'a>) -> bool;
-
-fn run(anchor: usize, head: usize, command: Command) -> CellSelection {
+fn run(anchor: usize, head: usize, command: TableEdit) -> CellSelection {
     let doc = empty_grid();
     let state = state(&doc, Selection::cell(&doc, anchor, head).unwrap(), None);
     let mut result = None;
-    assert!(command(&state, Some(&mut |tr| result = Some(state.apply(&tr)))));
+    assert!(command.run(&state, Some(&mut |tr| result = Some(state.apply(&tr)))));
     let Selection::Cell(cell) = result.unwrap().selection else { panic!("expected cell selection") };
     cell
 }
@@ -122,17 +120,17 @@ fn puts_anchor_and_head_around_head_cell_content() {
 
 #[test]
 fn extends_cell_selection_when_adding_row() {
-    let selection = run(34, 6, add_row_before);
+    let selection = run(34, 6, TableEdit::AddRowBefore);
     assert_eq!((selection.anchor, selection.head), (48, 6));
-    let selection = run(6, 30, add_row_after);
+    let selection = run(6, 30, TableEdit::AddRowAfter);
     assert_eq!((selection.anchor, selection.head), (6, 44));
 }
 
 #[test]
 fn extends_cell_selection_when_adding_column() {
-    let selection = run(16, 24, add_column_after);
+    let selection = run(16, 24, TableEdit::AddColumnAfter);
     assert_eq!((selection.anchor, selection.head), (20, 32));
-    let selection = run(24, 30, add_column_before);
+    let selection = run(24, 30, TableEdit::AddColumnBefore);
     assert_eq!((selection.anchor, selection.head), (32, 38));
 }
 

@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use crate::{fix_tables, TableMap};
 
-pub use prosemirror_state::{cell_around, points_at_cell, CellSelection};
+pub use prosemirror_state::{cell_around, points_at_cell, CellBookmark, CellSelection};
 
 pub const TABLE_EDITING_KEY: &str = "selectingCells$";
 
