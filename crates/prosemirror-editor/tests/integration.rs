@@ -437,7 +437,7 @@ fn routes_transformed_paste_and_clears_a_prevented_drag_preview() {
     let props = EditorProps { direct, view_plugins: vec![Rc::new(view)], ..EditorProps::default() };
     let mut editor = editor(state(doc!(p!("abc")).node, Vec::new()), props);
     assert!(editor.handle(Event::Clipboard(ClipboardEvent::PasteContent {
-        content: ClipboardContent { plain_text: "incoming".into(), internal: None },
+        content: ClipboardContent { plain_text: "incoming".into(), ..ClipboardContent::default() },
         plain_text: true,
     })).unwrap());
     assert_eq!(editor.state().doc.text_content(), "nativeabc");

@@ -51,6 +51,14 @@ jobs:
       - name: Run Test Suite
         run: cargo test --workspace --all-targets --no-fail-fast
 
+      - name: Test system clipboard on Linux
+        if: matrix.os == 'ubuntu-latest'
+        run: xvfb-run -a cargo test -p editor-app --test os_clipboard -- --ignored
+
+      - name: Test system clipboard on macOS and Windows
+        if: matrix.os != 'ubuntu-latest'
+        run: cargo test -p editor-app --test os_clipboard -- --ignored
+
       - name: Capture native editor screenshots
         if: ${{ !cancelled() && steps.check.outcome == 'success' }}
         id: screenshots

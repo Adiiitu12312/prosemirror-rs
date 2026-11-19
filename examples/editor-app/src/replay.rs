@@ -111,7 +111,7 @@ impl Input {
             Self::Cut => Event::Clipboard(ClipboardEvent::Cut),
             Self::Paste => Event::Clipboard(ClipboardEvent::Paste),
             Self::PasteText { text } => Event::Clipboard(ClipboardEvent::PasteContent {
-                content: ClipboardContent { plain_text: text, internal: None }, plain_text: true,
+                content: ClipboardContent { plain_text: text, ..ClipboardContent::default() }, plain_text: true,
             }),
             Self::DragBlock { pos } => Event::Drag(DragEvent::StartBlock { pos }),
             Self::DragOver { at } => Event::Drag(DragEvent::Over(at.point(host)?)),

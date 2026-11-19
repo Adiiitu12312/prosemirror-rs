@@ -6,12 +6,14 @@ license.workspace = true
 description = "Renderer-agnostic native ProseMirror editor"
 
 [dependencies]
+html5ever = "0.39"
 prosemirror-commands.workspace = true
 prosemirror-keymap.workspace = true
 prosemirror-model.workspace = true
 prosemirror-state.workspace = true
 prosemirror-transform.workspace = true
 prosemirror-view.workspace = true
+scraper = { version = "0.27", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
 unicode-segmentation.workspace = true

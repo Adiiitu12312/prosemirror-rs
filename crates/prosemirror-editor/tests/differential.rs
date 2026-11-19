@@ -275,7 +275,7 @@ fn run(editor: &mut Editor<ReplayHost>, action: &Action) {
             repeating: false,
         }),
         Action::Paste { text } => Event::Clipboard(ClipboardEvent::PasteContent {
-            content: ClipboardContent { plain_text: text.clone(), internal: None },
+            content: ClipboardContent { plain_text: text.clone(), ..ClipboardContent::default() },
             plain_text: true,
         }),
         Action::Clipboard { action } => Event::Clipboard(match action {

@@ -5,6 +5,7 @@ mod desktop;
 mod replay;
 mod setup;
 pub mod surface;
+mod system_clipboard;
 
 use std::{env, error::Error, ffi::OsStr, path::Path};
 

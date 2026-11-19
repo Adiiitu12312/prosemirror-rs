@@ -16,7 +16,7 @@ use prosemirror_view::{
 use crate::Attributes;
 
 /// Version of the native host and display-list contract.
-pub const HOST_INTERFACE_VERSION: u32 = 1;
+pub const HOST_INTERFACE_VERSION: u32 = 2;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Point {
@@ -129,6 +129,8 @@ pub trait Layout {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ClipboardContent {
     pub plain_text: String,
+    /// Portable clipboard markup, including ProseMirror slice context.
+    pub html: Option<String>,
     /// An opaque, editor-specific representation for rich round trips.
     pub internal: Option<Vec<u8>>,
 }

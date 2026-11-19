@@ -9,7 +9,7 @@ use prosemirror_transform::drop_point;
 use serde_json::json;
 
 use crate::{
-    accessibility_tree, move_selection, paste_slice, serialize_clipboard, Attributes, BlockUpdate, ClipboardEvent,
+    accessibility_tree, move_selection, paste_slice, Attributes, BlockUpdate, ClipboardEvent,
     CompositionDisplay, CompositionEvent, Decoration, DecorationGroup, DecorationType, Direction, DisplayList, DragDisplay, DragEvent,
     EditorProps, Event, EventAction, Host, KeyInput, MakeNodeView, MakePluginView, Movement,
     NodeView, PluginView, Point, PointerButton, PointerEvent, PointerInput, TouchEvent, ViewMutation,
@@ -628,7 +628,8 @@ impl<H: Host> Editor<H> {
                     return Ok(false);
                 }
                 let slice = self.state.selection.content(&self.state.doc)?;
-                self.host.write_clipboard(&serialize_clipboard(&slice)?);
+                let content = crate::clipboard::serialize_with_schema(&slice, Some(&self.state.schema))?;
+                self.host.write_clipboard(&content);
                 if cut {
                     let mut tr = self.state.tr();
                     tr.delete_selection().scroll_into_view().set_meta("uiEvent", json!("cut"));

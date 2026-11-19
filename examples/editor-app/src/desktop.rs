@@ -23,7 +23,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, OwnedDisplayHan
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{CursorIcon as WindowCursor, Window, WindowId};
 
-use crate::{setup, surface::SurfaceHost};
+use crate::{setup, surface::SurfaceHost, system_clipboard::SystemClipboard};
 
 const CLICK_INTERVAL: Duration = Duration::from_millis(450);
 const LONG_PRESS: Duration = Duration::from_millis(500);
@@ -109,8 +109,7 @@ impl Desktop {
         let size = window.inner_size();
         let host = DesktopHost {
             surface: SurfaceHost::new(size.width, size.height),
-            clipboard: arboard::Clipboard::new().ok(),
-            copied: None,
+            clipboard: SystemClipboard::default(),
             ghost_at: None,
             drag_hit: None,
             touch_carets: [None, None],
@@ -613,8 +612,7 @@ fn preedit_selection(text: &str, caret: Option<(usize, usize)>) -> Range<usize> 
 
 struct DesktopHost {
     surface: SurfaceHost,
-    clipboard: Option<arboard::Clipboard>,
-    copied: Option<ClipboardContent>,
+    clipboard: SystemClipboard,
     ghost_at: Option<Point>,
     drag_hit: Option<PositionAtCoords>,
     touch_carets: [Option<Rect>; 2],
@@ -664,24 +662,11 @@ impl Host for DesktopHost {
     }
 
     fn read_clipboard(&mut self) -> Option<ClipboardContent> {
-        match self.clipboard.as_mut().map(arboard::Clipboard::get_text) {
-            Some(Ok(text)) => Some(clipboard_content(&mut self.copied, text)),
-            Some(Err(arboard::Error::ContentNotAvailable)) => {
-                self.copied = None;
-                None
-            }
-            Some(Err(_)) | None => self.copied.clone(),
-        }
+        self.clipboard.read()
     }
 
     fn write_clipboard(&mut self, content: &ClipboardContent) {
-        if self.clipboard.is_none() {
-            self.clipboard = arboard::Clipboard::new().ok();
-        }
-        if let Some(clipboard) = &mut self.clipboard {
-            let _ = clipboard.set_text(content.plain_text.clone());
-        }
-        self.copied = Some(content.clone());
+        self.clipboard.write(content);
     }
 
     fn set_ime_candidate_rect(&mut self, rect: Option<Rect>) { self.surface.set_ime_candidate_rect(rect); }
@@ -690,16 +675,6 @@ impl Host for DesktopHost {
     fn viewport(&self) -> Option<Rect> { self.surface.viewport() }
     fn scroll_by(&mut self, delta: Point) { self.surface.scroll_by(delta); }
     fn update_accessibility(&mut self, update: &AccessibilityTreeUpdate) { self.surface.update_accessibility(update); }
-}
-
-fn clipboard_content(copied: &mut Option<ClipboardContent>, text: String) -> ClipboardContent {
-    if let Some(cached) = copied.as_ref().filter(|cached| {
-        cached.plain_text == text || cached.plain_text == text.replace("\r\n", "\n")
-    }) {
-        return cached.clone();
-    }
-    *copied = None;
-    ClipboardContent { plain_text: text, internal: None }
 }
 
 #[cfg(test)]
@@ -712,15 +687,6 @@ mod tests {
         assert_eq!(preedit_selection(text, Some((1, 5))), 1..3);
         assert_eq!(preedit_selection(text, Some((9, 2))), 1..4);
         assert_eq!(preedit_selection(text, None), 4..4);
-    }
-
-    #[test]
-    fn clipboard_keeps_matching_rich_data_and_drops_it_on_external_copy() {
-        let mut copied = Some(ClipboardContent { plain_text: "a\nb".into(), internal: Some(vec![1, 2, 3]) });
-        assert_eq!(clipboard_content(&mut copied, "a\r\nb".into()).internal, Some(vec![1, 2, 3]));
-        assert_eq!(clipboard_content(&mut copied, "outside".into()).internal, None);
-        assert!(copied.is_none());
-        assert_eq!(clipboard_content(&mut copied, "a\nb".into()).internal, None);
     }
 
     #[test]
