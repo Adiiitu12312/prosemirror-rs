@@ -115,7 +115,7 @@ pub struct DomParseOptions<'a> {
 #[derive(Clone, Debug)]
 pub struct DomParser {
     pub schema: Schema,
-    pub rules: Vec<DomParseRule>,
+    rules: Vec<DomParseRule>,
     normalize_lists: bool,
     styles: Vec<String>,
 }
@@ -170,6 +170,10 @@ impl DomParser {
 
     pub fn from_schema(schema: &Schema) -> Self {
         Self::new(schema.clone(), Self::schema_rules(schema))
+    }
+
+    pub fn rules(&self) -> &[DomParseRule] {
+        &self.rules
     }
 
     pub fn parse(&self, dom: &DomNode, options: DomParseOptions<'_>) -> Result<Node, ModelError> {

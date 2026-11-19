@@ -81,8 +81,7 @@ fn joinable<'a>(before: &'a ResolvedPos, after: &ResolvedPos, depth: usize) -> R
 fn add_node(child: Node, target: &mut Vec<Node>) {
     if let Some(last) = target.last_mut() {
         if child.is_text() && child.same_markup(last) {
-            let merged = format!("{}{}", last.text().unwrap_or(""), child.text().unwrap_or(""));
-            *last = last.with_text(merged);
+            *last = last.append_text(&child);
             return;
         }
     }

@@ -45,6 +45,8 @@ pub struct NodeSpec {
     pub defining_for_content: bool,
     pub isolating: bool,
     pub linebreak_replacement: bool,
+    pub allow_gap_cursor: Option<bool>,
+    pub create_gap_cursor: bool,
     pub leaf_text: Option<fn(&Node) -> String>,
     pub to_debug_string: Option<fn(&Node) -> String>,
     pub parse_dom: Vec<DomParseRule>,
@@ -69,6 +71,8 @@ impl Default for NodeSpec {
             defining_for_content: false,
             isolating: false,
             linebreak_replacement: false,
+            allow_gap_cursor: None,
+            create_gap_cursor: false,
             leaf_text: None,
             to_debug_string: None,
             parse_dom: Vec::new(),
@@ -623,6 +627,11 @@ pub(crate) fn check_attrs(
     name: &str,
 ) -> Result<(), ModelError> {
     for (attribute, spec) in specs {
+        if spec.default.is_none() && attrs.and_then(|values| values.get(attribute)).is_none() {
+            return Err(ModelError::InvalidAttributes(format!(
+                "No value supplied for attribute {attribute} on type {name}"
+            )));
+        }
         if let Some(allowed) = spec.validate.as_deref() {
             let kind = match attrs.and_then(|values| values.get(attribute)) {
                 Some(Value::Null) => "null",

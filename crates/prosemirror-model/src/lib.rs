@@ -1,3 +1,4 @@
+mod compare_deep;
 pub mod content;
 mod diff;
 pub mod dom;

@@ -11,10 +11,10 @@ pub(crate) fn find_diff_start(a: &Fragment, b: &Fragment, mut pos: usize) -> Opt
         if !left.same_markup(right) {
             return Some(pos);
         }
-        if let (Some(left), Some(right)) = (left.text(), right.text()) {
+        if let (Some(left), Some(right)) = (left.text_utf16(), right.text_utf16()) {
             if left != right {
-                let prefix = left.encode_utf16()
-                    .zip(right.encode_utf16())
+                let prefix = left.iter()
+                    .zip(right.iter())
                     .take_while(|(a, b)| a == b)
                     .count();
                 return Some(pos + prefix);
@@ -40,10 +40,8 @@ pub(crate) fn find_diff_end(
         if !left.same_markup(right) {
             return Some(DiffEnd { a: pos_a, b: pos_b });
         }
-        if let (Some(left), Some(right)) = (left.text(), right.text()) {
+        if let (Some(left), Some(right)) = (left.text_utf16(), right.text_utf16()) {
             if left != right {
-                let left: Vec<_> = left.encode_utf16().collect();
-                let right: Vec<_> = right.encode_utf16().collect();
                 let suffix = left.iter().rev()
                     .zip(right.iter().rev())
                     .take_while(|(a, b)| a == b)

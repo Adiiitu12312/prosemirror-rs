@@ -1,0 +1,17 @@
+[package]
+name = "prosemirror-gapcursor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ProseMirror gap cursor selections and native editor hooks"
+
+[dependencies]
+prosemirror-keymap = { path = "../prosemirror-keymap" }
+prosemirror-model.workspace = true
+prosemirror-state.workspace = true
+prosemirror-view.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+prosemirror-schema-basic.workspace = true
+prosemirror-transform.workspace = true

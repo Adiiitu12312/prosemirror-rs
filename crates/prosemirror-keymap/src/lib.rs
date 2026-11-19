@@ -132,7 +132,9 @@ pub fn keydown_handler<V, K: AsRef<str>>(
     platform: Platform,
 ) -> Result<impl Fn(&EditorState, Dispatch<'_>, &V, KeyEvent<'_>) -> bool, KeymapError> {
     let map = keymap(bindings, platform)?;
-    Ok(move |state, dispatch, view, event| map.handle_keydown(state, dispatch, view, event))
+    Ok(move |state: &EditorState, dispatch: Dispatch<'_>, view: &V, event: KeyEvent<'_>| {
+        map.handle_keydown(state, dispatch, view, event)
+    })
 }
 
 impl<V> Keymap<V> {
@@ -146,7 +148,7 @@ impl<V> Keymap<V> {
         let name = key_name::key_name(event, self.platform);
         let flags = event.modifiers;
         let mut run = |key: &str, flags: Modifiers| {
-            self.bindings.get(&flags.apply(key)).is_some_and(|command| command(state, dispatch, view))
+            self.bindings.get(&flags.apply(key)).is_some_and(|command| command(state, &mut *dispatch, view))
         };
         if run(name, flags) {
             return true;
@@ -176,5 +178,5 @@ pub fn dispatch_keymaps<V>(
     view: &V,
     event: KeyEvent<'_>,
 ) -> bool {
-    maps.iter().any(|map| map.handle_keydown(state, dispatch, view, event))
+    maps.iter().any(|map| map.handle_keydown(state, &mut *dispatch, view, event))
 }

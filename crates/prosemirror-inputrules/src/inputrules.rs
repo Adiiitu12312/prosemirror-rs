@@ -77,7 +77,9 @@ impl Matcher {
     fn find<'a>(&self, text: &'a [u16]) -> Option<InputMatch<'a>> {
         let mut last_index = self.last_index.as_ref().map(|index| index.lock().unwrap());
         let start = last_index.as_deref().copied().unwrap_or_default();
-        let matched = if self.unicode {
+        let matched = if start > text.len() {
+            None
+        } else if self.unicode {
             self.regex.find_from_utf16(text, start).next()
         } else {
             self.regex.find_from_ucs2(text, start).next()
@@ -209,7 +211,7 @@ fn run(
     rules: &[InputRule],
     key: &PluginKey,
 ) -> Option<Transaction> {
-    if composing {
+    if composing || from > to || to > state.doc.content().size() {
         return None;
     }
     let pos = state.doc.resolve(from).ok()?;

@@ -3,6 +3,8 @@ use prosemirror_model::{Fragment, ModelError, Node, ResolvedPos, Slice};
 use prosemirror_transform::Mappable;
 use serde_json::Value;
 
+use crate::gap_cursor::gap_cursor_or_near;
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum Selection {
@@ -17,6 +19,8 @@ pub enum Selection {
     },
     #[serde(rename = "all")]
     All,
+    #[serde(rename = "gapcursor")]
+    GapCursor { pos: usize },
 }
 
 impl Selection {
@@ -39,11 +43,16 @@ impl Selection {
         Self::All
     }
 
+    pub fn gap_cursor(pos: usize) -> Self {
+        Self::GapCursor { pos }
+    }
+
     pub fn from(&self) -> usize {
         match self {
             Self::Text { anchor, head } => (*anchor).min(*head),
             Self::Node { anchor } => *anchor,
             Self::All => 0,
+            Self::GapCursor { pos } => *pos,
         }
     }
 
@@ -52,6 +61,7 @@ impl Selection {
             Self::Text { anchor, head } => (*anchor).max(*head),
             Self::Node { anchor } => *anchor + self.selected_node(doc).map_or(0, |node| node.node_size()),
             Self::All => doc.content().size(),
+            Self::GapCursor { pos } => *pos,
         }
     }
 
@@ -60,6 +70,7 @@ impl Selection {
             Self::Text { anchor, .. } => *anchor,
             Self::Node { anchor } => *anchor,
             Self::All => 0,
+            Self::GapCursor { pos } => *pos,
         }
     }
 
@@ -68,6 +79,7 @@ impl Selection {
             Self::Text { head, .. } => *head,
             Self::Node { .. } => self.to(doc),
             Self::All => doc.content().size(),
+            Self::GapCursor { pos } => *pos,
         }
     }
 
@@ -76,6 +88,7 @@ impl Selection {
             Self::Text { anchor, head } => anchor == head,
             Self::Node { .. } => false,
             Self::All => false,
+            Self::GapCursor { .. } => true,
         }
     }
 
@@ -91,7 +104,7 @@ impl Selection {
     }
 
     pub fn visible(&self) -> bool {
-        !matches!(self, Self::Node { .. })
+        !matches!(self, Self::Node { .. } | Self::GapCursor { .. })
     }
 
     pub fn range(&self, doc: &Node) -> Result<SelectionRange, ModelError> {
@@ -109,6 +122,9 @@ impl Selection {
     }
 
     pub fn content(&self, doc: &Node) -> Result<Slice, ModelError> {
+        if matches!(self, Self::GapCursor { .. }) {
+            return Ok(Slice::empty());
+        }
         if let Some(node) = self.selected_node(doc) {
             return Ok(Slice::new(Fragment::from_nodes(vec![node]), 0, 0));
         }
@@ -219,6 +235,7 @@ impl Selection {
                 }
             }
             Self::All => Self::All,
+            Self::GapCursor { pos } => gap_cursor_or_near(&resolve_in(doc, mapping.map(*pos, 1))),
         }
     }
 
@@ -252,6 +269,7 @@ impl SelectionBookmark {
                 }
             }
             Selection::All => Selection::All,
+            Selection::GapCursor { pos } => Selection::gap_cursor(mapping.map(pos, 1)),
         })
     }
 
@@ -269,6 +287,7 @@ impl SelectionBookmark {
                 }
             }
             Selection::All => Selection::All,
+            Selection::GapCursor { pos } => gap_cursor_or_near(&resolve_in(doc, pos)),
         }
     }
 }

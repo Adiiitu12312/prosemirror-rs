@@ -498,3 +498,297 @@ fn uses_a_custom_top_node_when_parsing() {
     check_round_trip(&schema, DomNode::Fragment(vec![el("p", vec![txt("hello")])]),
         pm("blockquote", vec![paragraph(vec![text("hello")])]));
 }
+
+fn check_parse(parser: &DomParser, input: Vec<DomNode>, options: Options<'_>, expected: Value) {
+    let parsed = parser.parse(&DomNode::element("div", input), options).unwrap();
+    assert_eq!(parsed, support::node(&parser.schema, &expected));
+}
+
+fn added_rule(rule: Rule) -> DomParser {
+    let schema = schema();
+    let mut rules = vec![rule];
+    rules.extend(DomParser::schema_rules(&schema));
+    DomParser::new(schema, rules)
+}
+
+fn context_parser(context: &str) -> DomParser {
+    added_rule(Rule {
+        node: Some("horizontal_rule".to_owned()),
+        context: Some(context.to_owned()),
+        ..Rule::tag("foo")
+    })
+}
+
+fn empty(tag: &str) -> DomNode {
+    el(tag, Vec::new())
+}
+
+fn pm_empty(tag: &str) -> Value {
+    pm(tag, Vec::new())
+}
+
+#[test]
+fn recognizes_context_restrictions() {
+    let parser = context_parser("blockquote/");
+    check_parse(&parser, vec![empty("foo"), el("blockquote", vec![empty("foo"), el("p", vec![empty("foo")])])],
+        Options::default(), document(vec![pm("blockquote", vec![pm_empty("horizontal_rule"), pm_empty("paragraph")])]));
+}
+
+#[test]
+fn accepts_group_names_in_contexts() {
+    let parser = context_parser("block/");
+    check_parse(&parser, vec![empty("foo"), el("blockquote", vec![empty("foo"), empty("p")])],
+        Options::default(), document(vec![pm("blockquote", vec![pm_empty("horizontal_rule"), pm_empty("paragraph")])]));
+}
+
+#[test]
+fn understands_nested_context_restrictions() {
+    let parser = context_parser("blockquote/ordered_list//");
+    let input = vec![empty("foo"), el("blockquote", vec![
+        empty("foo"), el("ol", vec![el("li", vec![el("p", vec![txt("a")]), empty("foo")])]),
+    ])];
+    let expected_list = pm("ordered_list", vec![pm("list_item", vec![paragraph(vec![text("a")]), pm_empty("horizontal_rule")])]);
+    check_parse(&parser, input, Options::default(), document(vec![pm("blockquote", vec![expected_list])]));
+}
+
+#[test]
+fn understands_double_slashes_in_context_restrictions() {
+    let parser = context_parser("blockquote//list_item/");
+    let input = vec![empty("foo"), el("blockquote", vec![
+        empty("foo"), el("ol", vec![empty("foo"), el("li", vec![el("p", vec![txt("a")]), empty("foo")])]),
+    ])];
+    let expected_list = pm("ordered_list", vec![pm("list_item", vec![paragraph(vec![text("a")]), pm_empty("horizontal_rule")])]);
+    check_parse(&parser, input, Options::default(), document(vec![pm("blockquote", vec![expected_list])]));
+}
+
+#[test]
+fn understands_pipes_in_context_restrictions() {
+    let parser = context_parser("list_item/|blockquote/");
+    let input = vec![empty("foo"), el("blockquote", vec![empty("p"), empty("foo")]),
+        el("ol", vec![el("li", vec![el("p", vec![txt("a")]), empty("foo")])])];
+    let expected_block = pm("blockquote", vec![pm_empty("paragraph"), pm_empty("horizontal_rule")]);
+    let expected_list = pm("ordered_list", vec![pm("list_item", vec![paragraph(vec![text("a")]), pm_empty("horizontal_rule")])]);
+    check_parse(&parser, input, Options::default(), document(vec![expected_block, expected_list]));
+}
+
+#[test]
+fn uses_the_passed_context() {
+    let parser = context_parser("doc//blockquote/");
+    let doc = support::node(&parser.schema, &document(vec![pm("blockquote", vec![pm_empty("horizontal_rule")])]));
+    let top = support::node(&parser.schema, &pm_empty("blockquote"));
+    let context = doc.resolve(1).unwrap();
+    let options = Options { context: Some(&context), top_node: Some(&top), ..Options::default() };
+    let expected = pm("blockquote", vec![pm("blockquote", vec![pm_empty("horizontal_rule")])]);
+    check_parse(&parser, vec![el("blockquote", vec![empty("foo")])], options, expected);
+}
+
+#[test]
+fn uses_the_passed_context_when_parsing_a_slice() {
+    let parser = context_parser("doc//blockquote/");
+    let doc = support::node(&parser.schema, &document(vec![pm("blockquote", vec![pm_empty("horizontal_rule")])]));
+    let context = doc.resolve(1).unwrap();
+    let options = Options { context: Some(&context), ..Options::default() };
+    let slice = parser.parse_slice(&el("div", vec![empty("foo")]), options).unwrap();
+    assert_eq!((slice.open_start, slice.open_end), (0, 0));
+    assert_eq!(slice.content, doc.child(0).content().clone());
+}
+
+#[test]
+fn can_close_parent_nodes_from_a_rule() {
+    let parser = added_rule(Rule { close_parent: true, ..Rule::tag("br") });
+    check_parse(&parser, vec![el("p", vec![txt("one"), empty("br"), txt("two")])], Options::default(),
+        document(vec![paragraph(vec![text("one")]), paragraph(vec![text("two")])]));
+}
+
+#[test]
+fn supports_non_consuming_node_rules() {
+    let parser = added_rule(Rule { consuming: false, node: Some("blockquote".to_owned()), ..Rule::tag("ol") });
+    let expect = pm("blockquote", vec![pm("ordered_list", vec![pm("list_item", vec![paragraph(vec![text("one")])])])]);
+    check_parse(&parser, vec![el("ol", vec![el("p", vec![txt("one")])])], Options::default(), document(vec![expect]));
+}
+
+#[test]
+fn supports_non_consuming_style_rules() {
+    let parser = added_rule(Rule { consuming: false, mark: Some("em".to_owned()), ..Rule::style("font-weight") });
+    let input = vec![el("p", vec![styled("span", "font-weight: 800", vec![txt("one")])])];
+    let expect = mark_text("one", vec![json!({"type":"em"}), json!({"type":"strong"})]);
+    check_parse(&parser, input, Options::default(), document(vec![paragraph(vec![expect])]));
+}
+
+#[test]
+fn does_not_get_confused_by_nested_mark_tags() {
+    let parser = DomParser::from_schema(&schema());
+    let input = vec![el("div", vec![el("strong", vec![el("strong", vec![txt("A")])]), txt("B")]), el("span", vec![txt("C")])];
+    let expected = document(vec![paragraph(vec![mark_text("A", vec![json!({"type":"strong"})]), text("B")]), paragraph(vec![text("C")])]);
+    check_parse(&parser, input, Options::default(), expected);
+}
+
+#[test]
+fn ignores_styles_on_skipped_nodes() {
+    let parser = DomParser::from_schema(&schema());
+    let options = Options {
+        rule_from_node: Some(|element| (element.name == "span").then(|| Rule {skip: true, ..Rule::tag("span")})),
+        ..Options::default()
+    };
+    let input = vec![el("p", vec![txt("abc "), styled("span", "font-weight: strong", vec![txt("def")])])];
+    check_parse(&parser, input, options, document(vec![paragraph(vec![text("abc def")])]));
+}
+
+#[test]
+fn preserves_whitespace_in_pre_elements() {
+    let schema = Schema::new(vec![
+        ("doc".to_owned(), NodeSpec { content: Some("block+".to_owned()), ..NodeSpec::default() }),
+        ("text".to_owned(), NodeSpec { group: Some("inline".to_owned()), ..NodeSpec::default() }),
+        ("p".to_owned(), NodeSpec { content: Some("inline*".to_owned()), group: Some("block".to_owned()), ..NodeSpec::default() }),
+    ], Vec::new());
+    let parser = DomParser::from_schema(&schema);
+    let input = vec![el("pre", vec![txt("  hello ")]), txt("   ")];
+    check_parse(&parser, input, Options::default(), document(vec![pm("p", vec![text("  hello ")])]));
+}
+
+#[test]
+fn preserves_whitespace_in_nodes_styled_with_white_space() {
+    let parser = DomParser::from_schema(&schema());
+    let input = vec![txt("  "), styled("div", "white-space: pre", vec![txt("  okay  then ")]), txt("  "), el("p", vec![txt(" x")])];
+    check_parse(&parser, input, Options::default(), document(vec![paragraph(vec![text("  okay  then ")]), paragraph(vec![text("x")])]));
+}
+
+fn rule_order(priorities: (i32, i32, i32)) -> String {
+    let schema = Schema::new(vec![
+        ("doc".to_owned(), NodeSpec { content: Some("inline*".to_owned()), ..NodeSpec::default() }),
+        ("text".to_owned(), NodeSpec { group: Some("inline".to_owned()), ..NodeSpec::default() }),
+        ("foo".to_owned(), NodeSpec {
+            group: Some("inline".to_owned()), inline: true, parse_dom: vec![Rule::tag("foo")],
+            ..NodeSpec::default()
+        }),
+        ("bar".to_owned(), NodeSpec {
+            group: Some("inline".to_owned()), inline: true,
+            parse_dom: vec![Rule { priority: priorities.2, ..Rule::tag("bar") }],
+            ..NodeSpec::default()
+        }),
+    ], vec![("em".to_owned(), MarkSpec {
+        parse_dom: vec![Rule { priority: priorities.0, ..Rule::tag("i") }, Rule { priority: priorities.1, ..Rule::tag("em") }],
+        ..MarkSpec::default()
+    })]);
+    DomParser::schema_rules(&schema).into_iter().filter_map(|rule| match rule.kind {
+        DomRuleKind::Tag { selector, .. } => Some(selector),
+        DomRuleKind::Style(_) => None,
+    }).collect::<Vec<_>>().join(" ")
+}
+
+#[test]
+fn schema_rules_default_to_schema_order() {
+    assert_eq!(rule_order((50, 50, 50)), "i em foo bar");
+}
+
+#[test]
+fn schema_rules_understand_priority() {
+    assert_eq!(rule_order((40, 70, 60)), "em bar foo i");
+}
+
+fn ns_parse(namespace: Option<&str>, rule: Option<&str>) -> usize {
+    let schema = Schema::new(vec![
+        ("doc".to_owned(), NodeSpec { content: Some("h*".to_owned()), ..NodeSpec::default() }),
+        ("text".to_owned(), NodeSpec::default()),
+        ("h".to_owned(), NodeSpec {
+            parse_dom: vec![rule.map_or_else(|| Rule::tag("h"), |ns| Rule::tag("h").with_namespace(ns))],
+            ..NodeSpec::default()
+        }),
+    ], Vec::new());
+    let child = DomNode::Element(DomElement { namespace: namespace.map(str::to_owned), ..DomElement::new("h", Vec::new()) });
+    let input = el("doc", vec![child]);
+    DomParser::from_schema(&schema).parse(&input, Options::default()).unwrap().child_count()
+}
+
+#[test]
+fn includes_nodes_when_namespace_is_correct() {
+    assert_eq!(ns_parse(Some("urn:ns"), Some("urn:ns")), 1);
+}
+
+#[test]
+fn excludes_nodes_when_namespace_is_wrong() {
+    assert_eq!(ns_parse(Some("urn:nt"), Some("urn:ns")), 0);
+}
+
+#[test]
+fn excludes_nodes_when_namespace_is_absent() {
+    assert_eq!(ns_parse(None, Some("urn:ns")), 0);
+}
+
+#[test]
+fn excludes_nodes_when_namespace_is_wrong_and_xhtml() {
+    assert_eq!(ns_parse(Some("urn:nt"), Some("http://www.w3.org/1999/xhtml")), 0);
+}
+
+#[test]
+fn excludes_nodes_when_namespace_is_wrong_and_empty() {
+    assert_eq!(ns_parse(Some("urn:nt"), Some("")), 0);
+}
+
+#[test]
+fn includes_nodes_when_namespace_is_correct_and_empty() {
+    assert_eq!(ns_parse(None, None), 1);
+}
+
+fn check_serialized(serializer: &DomSerializer, schema: &Schema, node: Value, expected: DomNode) {
+    let dom = serializer.serialize_node(&support::node(schema, &node)).unwrap();
+    assert_eq!(normalize_dom(&dom), normalize_dom(&expected));
+}
+
+#[test]
+fn serializer_can_omit_a_mark() {
+    let schema = schema();
+    let mut serializer = DomSerializer::from_schema(&schema);
+    serializer.marks.remove("em");
+    check_serialized(&serializer, &schema, paragraph(vec![
+        text("foo"), mark_text("bar", vec![json!({"type":"em"})]), mark_text("baz", vec![json!({"type":"strong"})]),
+    ]), el("p", vec![txt("foobar"), el("strong", vec![txt("baz")])]));
+}
+
+#[test]
+fn serializer_does_not_split_other_marks_for_omitted_marks() {
+    let schema = schema();
+    let mut serializer = DomSerializer::from_schema(&schema);
+    serializer.marks.remove("em");
+    check_serialized(&serializer, &schema, paragraph(vec![
+        text("foo"), mark_text("bar", vec![json!({"type":"code"})]),
+        mark_text("baz", vec![json!({"type":"em"}), json!({"type":"code"})]),
+        mark_text("quux", vec![json!({"type":"em"})]), text("xyz"),
+    ]), el("p", vec![txt("foo"), el("code", vec![txt("barbaz")]), txt("quuxxyz")]));
+}
+
+#[test]
+fn serializer_can_render_marks_with_complex_structure() {
+    let schema = schema();
+    let mut serializer = DomSerializer::from_schema(&schema);
+    serializer.marks.insert("em".to_owned(), |_, _| Output::element("em", vec![
+        Output::element_with_attrs("i", vec![DomAttribute::new("data-emphasis", "true")], vec![Output::Hole]),
+    ]));
+    let strong = json!({"type":"strong"});
+    let em = json!({"type":"em"});
+    let code = json!({"type":"code"});
+    check_serialized(&serializer, &schema, paragraph(vec![
+        mark_text("foo", vec![strong.clone()]), mark_text("bar", vec![strong.clone(), code.clone()]),
+        mark_text("baz", vec![em.clone(), strong, code]), mark_text("quux", vec![em]), text("xyz"),
+    ]), el("p", vec![
+        el("strong", vec![txt("foo"), el("code", vec![txt("bar")])]),
+        el("em", vec![with_attrs("i", &[("data-emphasis", "true")], vec![
+            el("strong", vec![el("code", vec![txt("baz")])]), txt("quux"),
+        ])]), txt("xyz"),
+    ]));
+}
+
+#[test]
+fn serializer_does_not_interpret_document_attributes_as_dom_specs() {
+    let schema = schema();
+    let mut serializer = DomSerializer::from_schema(&schema);
+    serializer.nodes.insert("image".to_owned(), |node| {
+        let text = node.attrs().unwrap()["alt"].to_string();
+        Output::element("span", vec![Output::element("img", Vec::new()), Output::Text(text)])
+    });
+    let model = schema.node_type("image").unwrap().create(Some(json!({
+        "src": "x.png", "alt": ["aside", {"class":"unexpected"}],
+    })), None, None);
+    let serialized = serializer.serialize_node(&model).unwrap();
+    assert_eq!(serialized, el("span", vec![empty("img"), txt(r#"["aside",{"class":"unexpected"}]"#)]));
+}

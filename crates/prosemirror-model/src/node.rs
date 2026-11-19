@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -20,6 +21,7 @@ pub fn slice_utf16(s: &str, start_u16: usize, end_u16: usize) -> String {
 pub struct Node {
     inner: Arc<NodeInner>,
     schema: Option<Schema>,
+    unpaired_text: Option<Arc<[u16]>>,
     raw_leaf: bool,
     raw_inline_content: bool,
 }
@@ -52,7 +54,7 @@ impl Fragment {
         for node in nodes {
             if let Some(last) = children.last_mut() {
                 if last.is_text() && last.same_markup(&node) {
-                    *last = last.with_text(format!("{}{}", last.text().unwrap_or(""), node.text().unwrap_or("")));
+                    *last = last.append_text(&node);
                     continue;
                 }
             }
@@ -107,7 +109,7 @@ impl Fragment {
         let mut start = 0;
         if last.is_text() && last.same_markup(first) {
             let index = children.len() - 1;
-            children[index] = last.with_text(format!("{}{}", last.text().unwrap_or(""), first.text().unwrap_or("")));
+            children[index] = last.append_text(first);
             start = 1;
         }
         children.extend_from_slice(&other.children[start..]);
@@ -321,6 +323,7 @@ impl Node {
                 text: None,
             }),
             schema,
+            unpaired_text: None,
             raw_leaf,
             raw_inline_content,
         }
@@ -344,6 +347,7 @@ impl Node {
                 text: Some(text.into()),
             }),
             schema,
+            unpaired_text: None,
             raw_leaf: true,
             raw_inline_content: false,
         }
@@ -367,6 +371,15 @@ impl Node {
 
     pub fn text(&self) -> Option<&str> {
         self.inner.text.as_deref()
+    }
+
+    /// Returns the original UTF-16 code units, even for a text fragment
+    /// containing an unpaired surrogate.
+    pub fn text_utf16(&self) -> Option<Cow<'_, [u16]>> {
+        if let Some(unpaired) = &self.unpaired_text {
+            return Some(Cow::Borrowed(unpaired.as_ref()));
+        }
+        self.text().map(|text| Cow::Owned(text.encode_utf16().collect()))
     }
 
     pub fn schema(&self) -> Option<&Schema> {
@@ -419,7 +432,10 @@ impl Node {
     pub fn node_size(&self) -> usize {
         if self.is_text() {
             // ProseMirror counts positions in UTF-16 code units
-            self.text().map(|t| t.encode_utf16().count()).unwrap_or(0)
+            self.unpaired_text.as_ref().map_or_else(
+                || self.text().map_or(0, |text| text.encode_utf16().count()),
+                |units| units.len(),
+            )
         } else if self.is_leaf() {
             1
         } else {
@@ -521,12 +537,36 @@ impl Node {
     pub(crate) fn with_text(&self, text: String) -> Self {
         let mut node = self.clone();
         Arc::make_mut(&mut node.inner).text = Some(text);
+        node.unpaired_text = None;
         node
     }
 
+    fn with_text_utf16(&self, units: &[u16]) -> Self {
+        match String::from_utf16(units) {
+            Ok(text) => self.with_text(text),
+            Err(_) => {
+                let mut node = self.with_text(String::from_utf16_lossy(units));
+                node.unpaired_text = Some(Arc::from(units));
+                node
+            }
+        }
+    }
+
+    pub(crate) fn append_text(&self, other: &Node) -> Self {
+        if self.unpaired_text.is_none() && other.unpaired_text.is_none() {
+            let mut text = self.text().unwrap_or_default().to_owned();
+            text.push_str(other.text().unwrap_or_default());
+            return self.with_text(text);
+        }
+        let mut units = self.text_utf16().unwrap_or_default().into_owned();
+        units.extend_from_slice(&other.text_utf16().unwrap_or_default());
+        self.with_text_utf16(&units)
+    }
+
     pub fn cut(&self, from: usize, to: usize) -> Self {
-        if let Some(text) = self.text() {
-            self.with_text(slice_utf16(text, from, to))
+        if let Some(units) = self.text_utf16() {
+            let end = to.min(units.len());
+            self.with_text_utf16(&units[from.min(end)..end])
         } else if from == 0 && to == self.content().size() {
             self.clone()
         } else {
@@ -667,13 +707,19 @@ impl Node {
     }
 
     pub fn check(&self) -> Result<(), ModelError> {
-        if let Some(node_type) = self.node_type() {
+        self.check_with_schema(self.schema())
+    }
+
+    fn check_with_schema(&self, schema: Option<&Schema>) -> Result<(), ModelError> {
+        if let Some(schema) = schema {
+            let node_type = schema.node_type(self.type_name())
+                .ok_or_else(|| ModelError::UnknownNodeType(self.type_name().to_owned()))?;
             node_type.check_content(self.content())?;
             crate::schema::check_attrs(&node_type.spec.attrs, self.attrs(), self.type_name())?;
         }
         let mut checked = Vec::new();
         for mark in self.marks() {
-            if let Some(schema) = self.schema() {
+            if let Some(schema) = schema {
                 schema.mark_type(&mark.type_name)
                     .ok_or_else(|| ModelError::UnknownMarkType(mark.type_name.clone()))?
                     .check_attrs(mark.attrs.as_ref())?;
@@ -684,7 +730,7 @@ impl Node {
             return Err(ModelError::InvalidMarks(self.type_name().to_owned()));
         }
         for child in &self.content().children {
-            child.check()?;
+            child.check_with_schema(schema.or_else(|| child.schema()))?;
         }
         Ok(())
     }
@@ -694,6 +740,7 @@ impl PartialEq for Node {
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.inner, &other.inner) || (
             self.same_markup(other) && self.text() == other.text() && self.content() == other.content()
+                && self.unpaired_text == other.unpaired_text
         )
     }
 }
@@ -757,7 +804,11 @@ pub(crate) fn same_attrs(a: Option<&Value>, b: Option<&Value>) -> bool {
     fn nonempty(value: &&Value) -> bool {
         !value.is_null() && value.as_object().is_none_or(|map| !map.is_empty())
     }
-    a.filter(nonempty) == b.filter(nonempty)
+    match (a.filter(nonempty), b.filter(nonempty)) {
+        (Some(a), Some(b)) => crate::compare_deep::compare_deep(a, b),
+        (None, None) => true,
+        _ => false,
+    }
 }
 
 impl Serialize for Node {

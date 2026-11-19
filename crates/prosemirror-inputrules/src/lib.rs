@@ -4,6 +4,7 @@ mod inputrules;
 mod rulebuilders;
 mod rules;
 
+pub use regress::Error as InputRuleError;
 pub use inputrules::{input_rules, undo_input_rule, InCode, InputMatch, InputRule, InputRuleOptions};
 pub use rulebuilders::{textblock_type_input_rule, wrapping_input_rule, Attrs, JoinPredicate};
 pub use rules::{
