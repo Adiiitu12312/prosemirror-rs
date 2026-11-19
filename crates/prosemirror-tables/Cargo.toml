@@ -5,6 +5,22 @@ edition.workspace = true
 license.workspace = true
 description = "Table schema and grid mapping for ProseMirror documents"
 
+[features]
+browser = [
+    "dep:prosemirror-keymap",
+    "dep:wasm-bindgen",
+    "dep:web-sys",
+    "prosemirror-keymap/browser",
+    "prosemirror-view/browser",
+]
+browser-tests = [
+    "browser",
+    "dep:wasm-bindgen-test",
+    "web-sys/ClipboardEventInit",
+    "web-sys/KeyboardEventInit",
+    "web-sys/MouseEventInit",
+]
+
 [dependencies]
 prosemirror-model.workspace = true
 prosemirror-state.workspace = true
@@ -14,17 +30,18 @@ serde_json.workspace = true
 thiserror.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-prosemirror-keymap.workspace = true
-wasm-bindgen = "0.2"
-web-sys = { version = "0.3", features = [
+prosemirror-keymap = { workspace = true, optional = true }
+wasm-bindgen = { version = "0.2", optional = true }
+web-sys = { optional = true, version = "0.3", features = [
     "CssStyleDeclaration", "Document", "DomRect", "Element", "Event", "EventTarget",
     "HtmlElement", "KeyboardEvent", "MouseEvent", "Node", "NodeList", "UiEvent", "Window", "console",
 ] }
+wasm-bindgen-test = { version = "0.3", optional = true }
 
 [dev-dependencies]
 prosemirror-schema-basic.workspace = true
 prosemirror-test-builder.workspace = true
 
-[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
-wasm-bindgen-test = "0.3"
-web-sys = { version = "0.3", features = ["ClipboardEventInit", "KeyboardEventInit", "MouseEventInit"] }
+[[test]]
+name = "browser"
+required-features = ["browser-tests"]

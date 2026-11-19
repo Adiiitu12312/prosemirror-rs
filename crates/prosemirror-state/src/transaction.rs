@@ -491,7 +491,12 @@ fn transaction_time() -> u64 {
         .map_or(0, |duration| duration.as_millis() as u64)
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "browser-clock"))]
 fn transaction_time() -> u64 {
     js_sys::Date::now() as u64
+}
+
+#[cfg(all(target_arch = "wasm32", not(feature = "browser-clock")))]
+fn transaction_time() -> u64 {
+    0
 }

@@ -1,4 +1,4 @@
-#![cfg(target_arch = "wasm32")]
+#![cfg(all(target_arch = "wasm32", feature = "browser"))]
 
 use prosemirror_gapcursor::{browser_plugin, CSS};
 use prosemirror_keymap::Platform;

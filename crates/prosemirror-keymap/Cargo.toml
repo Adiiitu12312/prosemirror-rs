@@ -5,12 +5,19 @@ edition.workspace = true
 license.workspace = true
 description = "ProseMirror keyboard bindings for native and web editor integrations"
 
+[features]
+browser = [
+    "dep:prosemirror-view",
+    "dep:web-sys",
+    "prosemirror-view/browser",
+]
+
 [dependencies]
 prosemirror-state.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-prosemirror-view.workspace = true
-web-sys = { version = "0.3", features = ["Document", "KeyboardEvent", "Navigator", "Window"] }
+prosemirror-view = { workspace = true, optional = true }
+web-sys = { optional = true, version = "0.3", features = ["Document", "KeyboardEvent", "Navigator", "Window"] }
 
 [dev-dependencies]
 prosemirror-schema-basic.workspace = true

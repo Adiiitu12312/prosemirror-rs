@@ -1,6 +1,6 @@
 # prosemirror-rs
 
-A Rust port of [ProseMirror](https://prosemirror.net/). The workspace contains the document model, transforms, editor state, editing commands, and editor plugins. The view crate includes a native controller and a WebAssembly browser editor.
+A Rust port of [ProseMirror](https://prosemirror.net/) for native editors. The workspace contains the document model, transforms, editor state, editing commands, and editor plugins. The existing WebAssembly adapter is opt-in.
 
 [![CI Pipeline](https://github.com/Adiiitu12312/prosemirror-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/Adiiitu12312/prosemirror-rs/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -29,10 +29,14 @@ A Rust port of [ProseMirror](https://prosemirror.net/). The workspace contains t
 | `prosemirror-menu` | 1.3.0 | Native and browser menus, dropdowns, focus navigation, and stock commands |
 | `prosemirror-example-setup` | 1.2.3 | Standard input rules, key bindings, menus, prompts, and plugin configuration |
 | `prosemirror-view` | 1.42.9 | Native and browser editor controllers, decoration trees, DOM reconciliation, and clipboard logic |
+| `prosemirror-fuzz` | — | Rust and JavaScript differential test harness |
+| `prosemirror-integration-tests` | — | Workspace integration tests |
+
+The schema uses the ordering semantics of `orderedmap` 2.1.1. The JavaScript history reference uses `rope-sequence` 1.3.4. The Rust key name tables match `w3c-keyname` 2.2.8.
 
 The model, transform, state, history, commands, list, test-builder, collaboration, Markdown, search, changeset, and table suites carry cases from the corresponding upstream test files. All eleven ProseMirror View 1.42.9 test files have Rust ports, with portable decoration and clipboard tests and WebAssembly equivalents for the browser DOM cases.
 
-On `wasm32-unknown-unknown`, construct a `prosemirror_view::BrowserView` from a mount, an editor state, and view props. It renders into the browser DOM and uses the native selection, mutation observer, and input events. Browser DOM parsing uses native CSS selector matching. Include `prosemirror_view::browser::CSS` in the page for the standard editor styles. `prosemirror_example_setup::browser::example_setup` provides the standard schema-aware state plugins and browser props.
+The default workspace build is native-first and has no browser dependencies. Enable a crate's `browser` Cargo feature on `wasm32-unknown-unknown` to use its existing browser adapter. The CI browser jobs enable `browser-tests` explicitly.
 
 Positions and internal text edits use UTF-16 code units. The model exposes `Node::text_utf16()` for exact access to isolated surrogate code units. Rust UTF-8, DOM text, and JSON APIs represent those isolated units with replacement characters.
 

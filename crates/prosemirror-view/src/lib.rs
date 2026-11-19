@@ -1,5 +1,5 @@
 pub mod accessibility;
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "browser"))]
 pub mod browser;
 pub mod clipboard;
 pub mod decoration;
@@ -10,7 +10,7 @@ pub mod paste;
 pub mod selection_handles;
 
 pub use accessibility::{build_accessibility_tree, AccessibilityNode, AccessibilityRole, AccessibilityTreeUpdate};
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "browser"))]
 pub use browser::{BrowserView, BrowserViewProps, Mount};
 pub use clipboard::{parse_from_clipboard, serialize_for_clipboard, ClipboardData, ClipboardOptions};
 pub use decoration::{remove_overlap, Decoration, DecorationAttrs, DecorationGroup, DecorationSet, DecorationType};

@@ -1,9 +1,9 @@
 //! Editor hooks from prosemirror-gapcursor 1.4.0.
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "browser"))]
 mod browser;
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "browser"))]
 pub use browser::browser_plugin;
 
 /// The standard ProseMirror gap cursor style.

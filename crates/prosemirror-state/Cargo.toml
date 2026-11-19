@@ -5,6 +5,9 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Pure Rust editor state, selections, transactions, and plugins matching ProseMirror"
 
+[features]
+browser-clock = ["dep:js-sys"]
+
 [dependencies]
 prosemirror-model = { workspace = true }
 prosemirror-transform = { workspace = true }
@@ -13,7 +16,7 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-js-sys = "0.3"
+js-sys = { version = "0.3", optional = true }
 
 [dev-dependencies]
 prosemirror-test-builder = { path = "../prosemirror-test-builder" }

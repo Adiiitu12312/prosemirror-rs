@@ -1,6 +1,6 @@
 //! Example editor input and command configuration from prosemirror-example-setup@1.2.3.
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "browser"))]
 pub mod browser;
 pub mod inputrules;
 pub mod keymap;
@@ -46,9 +46,9 @@ impl<'a> ExampleSetupOptions<'a> {
 }
 
 fn default_platform() -> Platform {
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", feature = "browser"))]
     return Platform::browser();
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(all(target_arch = "wasm32", feature = "browser")))]
     Platform::current()
 }
 

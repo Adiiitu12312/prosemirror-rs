@@ -1,9 +1,9 @@
 //! Port of prosemirror-dropcursor@1.8.2/src/dropcursor.ts.
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "browser"))]
 mod browser;
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "browser"))]
 pub use browser::{browser_plugin, browser_plugin_with_disabled, DisableDropCursor};
 
 use prosemirror_model::{Node, Slice};

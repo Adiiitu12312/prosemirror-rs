@@ -1,4 +1,4 @@
-#![cfg(target_arch = "wasm32")]
+#![cfg(all(target_arch = "wasm32", feature = "browser"))]
 
 use std::cell::RefCell;
 use std::rc::Rc;

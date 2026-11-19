@@ -5,6 +5,18 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "ProseMirror view controllers, decorations, clipboard, layout, and input"
 
+[features]
+browser = [
+    "dep:js-sys",
+    "dep:wasm-bindgen",
+    "dep:web-sys",
+    "prosemirror-state/browser-clock",
+]
+browser-tests = [
+    "browser",
+    "dep:wasm-bindgen-test",
+]
+
 [dependencies]
 prosemirror-model = { workspace = true }
 prosemirror-transform = { workspace = true }
@@ -14,9 +26,9 @@ serde_json = { workspace = true }
 unicode-segmentation = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-wasm-bindgen = "0.2"
-js-sys = "0.3"
-web-sys = { version = "0.3", features = [
+wasm-bindgen = { version = "0.2", optional = true }
+js-sys = { version = "0.3", optional = true }
+web-sys = { optional = true, version = "0.3", features = [
     "Attr", "ClipboardEvent", "ClipboardEventInit", "Comment", "CompositionEvent", "CssStyleDeclaration", "DataTransfer",
     "Document", "DocumentFragment", "DomImplementation", "DomRect", "DomRectList", "DomTokenList", "DragEvent",
     "Element", "Event", "EventInit", "EventTarget", "FileList", "FocusEvent", "FocusOptions", "HtmlElement",
@@ -24,11 +36,13 @@ web-sys = { version = "0.3", features = [
     "MutationObserverInit", "MutationRecord", "NamedNodeMap", "Navigator", "Node", "NodeList",
     "Range", "Selection", "ShadowRoot", "Text", "VisualViewport", "Window", "console",
 ] }
+wasm-bindgen-test = { version = "0.3", optional = true }
 
 [dev-dependencies]
 prosemirror-schema-basic.workspace = true
 prosemirror-schema-list.workspace = true
 prosemirror-test-builder.workspace = true
 
-[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
-wasm-bindgen-test = "0.3"
+[[test]]
+name = "browser"
+required-features = ["browser-tests"]

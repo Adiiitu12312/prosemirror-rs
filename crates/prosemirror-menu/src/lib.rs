@@ -3,7 +3,7 @@
 //! Native hosts provide rendering and interaction through [MenuHost].
 //! The WebAssembly browser module supplies a DOM toolbar plugin for BrowserView.
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "browser"))]
 pub mod browser;
 
 mod icons;

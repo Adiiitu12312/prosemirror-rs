@@ -2,9 +2,9 @@ name: CI Pipeline
 
 on:
   push:
-    branches: [ "main", "master", "codex/prosemirror-parity" ]
+    branches: [ "main", "codex/native-*" ]
   pull_request:
-    branches: [ "main", "master" ]
+    branches: [ "main" ]
   workflow_dispatch:
   schedule:
     # Run differential fuzzing continuously every night
@@ -102,7 +102,7 @@ jobs:
           for package in "${packages[@]}"; do
             package_args+=(-p "$package")
           done
-          cargo clippy "${package_args[@]}" --target wasm32-unknown-unknown --test browser -- -D warnings
+          cargo clippy "${package_args[@]}" --target wasm32-unknown-unknown --features browser-tests --test browser -- -D warnings
 
       - name: Run the Rust browser tests
         if: ${{ !cancelled() }}
@@ -126,6 +126,22 @@ jobs:
           read -r -a packages <<< "$BROWSER_TEST_PACKAGES"
           result=0
           for package in "${packages[@]}"; do
-            wasm-pack test --headless "--$TEST_BROWSER" "crates/$package" --test browser || result=1
+            wasm-pack test --headless "--$TEST_BROWSER" "crates/$package" --test browser --features browser-tests || result=1
           done
           exit "$result"
+
+  native-dependencies:
+    name: Default dependency graph
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Verify browser code is opt-in on all targets
+        run: |
+          for target in x86_64-unknown-linux-gnu wasm32-unknown-unknown; do
+            graph=$(cargo tree --workspace --target "$target" --prefix none)
+            if grep -Eq '^(wasm-bindgen(-[^ ]+)?|web-sys|js-sys) ' <<< "$graph"; then
+              echo "Default dependencies contain a browser dependency on $target"
+              exit 1
+            fi
+          done

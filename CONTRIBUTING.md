@@ -6,7 +6,7 @@ Thank you for your interest in contributing to `prosemirror-rs`.
 
 1. **Parity First**: The JavaScript ProseMirror reference implementation is authoritative. Any discrepancy in JSON formatting, position mapping, or step application between Rust and JS is treated as a defect.
 2. **Differential Verification**: All modifications to `model`, `transform`, or `state` must pass differential fuzzing against `oracle/server.js`.
-3. **Core portability**. Keep DOM and browser APIs in the view adapter. The document, transform, and state APIs are shared by native and WebAssembly editors.
+3. **Core portability**. Build new editor and view behavior for native hosts. Keep the existing WebAssembly adapters behind the opt-in `browser` feature.
 4. **Source and test parity**. Use the pinned upstream implementation as the reference. Preserve source attribution and keep corresponding upstream test cases identifiable in Rust.
 
 ## Submitting Pull Requests
@@ -15,5 +15,5 @@ Thank you for your interest in contributing to `prosemirror-rs`.
    ```bash
    node oracle/test_oracle.js
    ```
-2. Verify Rust compilation and tests in GitHub Actions across Linux, macOS, and Windows and in the Chrome and Firefox WebAssembly jobs.
+2. Verify Rust compilation, the test suites, and the JavaScript oracle in GitHub Actions. Merge each verified step into `main`.
 3. If introducing changes to step application or position mapping, run the fuzzer with a high iteration count.
