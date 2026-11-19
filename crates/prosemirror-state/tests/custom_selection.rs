@@ -43,7 +43,7 @@ impl CustomSelection for DisjointSelection {
     }
 
     fn json_fields(&self) -> Map<String, Value> {
-        [("ranges".into(), json!(self.positions()))].into()
+        Map::from_iter([("ranges".into(), json!(self.positions()))])
     }
 }
 
@@ -60,7 +60,7 @@ impl CustomSelectionBookmark for DisjointBookmark {
     }
 
     fn json_fields(&self) -> Map<String, Value> {
-        [("ranges".into(), json!(self.0))].into()
+        Map::from_iter([("ranges".into(), json!(self.0))])
     }
 }
 

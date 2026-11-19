@@ -19,6 +19,7 @@ pub struct Mark {
 
 #[derive(Debug)]
 struct MarkRules {
+    identity: Arc<()>,
     rank: usize,
     inclusive: bool,
     spanning: bool,
@@ -45,12 +46,17 @@ impl Mark {
             type_name: mark_type.name.clone(),
             attrs,
             rules: Some(Arc::new(MarkRules {
+                identity: mark_type.identity.clone(),
                 rank: mark_type.rank,
                 inclusive: mark_type.spec.inclusive,
                 spanning: mark_type.spec.spanning,
                 excluded: mark_type.excluded.clone(),
             })),
         }
+    }
+
+    pub(crate) fn belongs_to(&self, mark_type: &MarkType) -> bool {
+        self.rules.as_ref().is_some_and(|rules| Arc::ptr_eq(&rules.identity, &mark_type.identity))
     }
 
     pub fn is_inclusive(&self) -> bool {

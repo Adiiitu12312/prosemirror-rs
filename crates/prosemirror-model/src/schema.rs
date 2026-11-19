@@ -327,6 +327,7 @@ pub struct MarkType {
     pub spec: MarkSpec,
     pub(crate) rank: usize,
     pub(crate) excluded: HashSet<String>,
+    pub(crate) identity: Arc<()>,
     attributes: HashMap<String, AttributeSpec>,
 }
 
@@ -339,7 +340,7 @@ impl MarkType {
         attributes.extend(spec.attributes.clone());
         let excluded = spec.excludes.as_deref().unwrap_or(&name)
             .split_whitespace().map(str::to_owned).collect();
-        Self { name, spec, rank: 0, excluded, attributes }
+        Self { name, spec, rank: 0, excluded, identity: Arc::new(()), attributes }
     }
 
     pub fn create(&self, attrs: Option<Value>) -> Mark {
@@ -581,6 +582,9 @@ impl Schema {
         for mark in &mut marks {
             let mark_type = self.mark_type(&mark.type_name)
                 .ok_or_else(|| ModelError::UnknownMarkType(mark.type_name.clone()))?;
+            if mark.belongs_to(mark_type) {
+                continue;
+            }
             let attrs = compute_attrs(&mark_type.attributes, mark.attrs.as_ref(), &mark.type_name)?;
             *mark = Mark::from_type(mark_type, attrs);
         }

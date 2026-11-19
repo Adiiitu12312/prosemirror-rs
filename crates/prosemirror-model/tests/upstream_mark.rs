@@ -2,6 +2,7 @@
 
 mod support;
 
+use prosemirror_model::{AttributeSpec, MarkSpec, NodeSpec, Schema};
 use serde_json::json;
 
 #[test]
@@ -9,6 +10,21 @@ fn checks_attributes_on_mark_creation() {
     let schema = support::schema("block+");
     let error = schema.mark_type("link").unwrap().try_create(Some(json!({"href":55}))).unwrap_err();
     assert!(error.to_string().contains("Expected value of type string"));
+}
+
+#[test]
+fn preserves_defaulted_attrs_when_attaching_an_existing_mark() {
+    let schema = Schema::new(vec![
+        ("doc".into(), NodeSpec { content: Some("text*".into()), ..NodeSpec::default() }),
+        ("text".into(), NodeSpec::default()),
+    ], vec![("tag".into(), MarkSpec {
+        attributes: [("name".into(), AttributeSpec::new(Some(json!(null)), Some("string")))].into(),
+        ..MarkSpec::default()
+    })]);
+    let mark = schema.mark_type("tag").unwrap().try_create(None).unwrap();
+    let node = schema.try_text("text", Some(vec![mark])).unwrap();
+    assert_eq!(node.marks()[0].attrs, Some(json!({"name":null})));
+    assert!(node.check().is_err());
 }
 
 support::cases! {

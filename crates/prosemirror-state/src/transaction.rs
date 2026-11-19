@@ -300,7 +300,18 @@ impl Transaction {
         let from = selection.from();
         let to = selection.to(self.doc());
         if inherit_marks {
-            let marks = self.stored_marks.clone().unwrap_or_else(|| self.marks_for_range(from, to));
+            let marks = self.stored_marks.clone().unwrap_or_else(|| {
+                if let Selection::Custom(custom) = &selection {
+                    let range = &custom.ranges[0];
+                    if selection.empty() {
+                        range.from.marks()
+                    } else {
+                        range.from.marks_across(&range.to).unwrap_or_default()
+                    }
+                } else {
+                    self.marks_for_range(from, to)
+                }
+            });
             node = node.with_marks(marks);
         }
         if let Selection::Cell(cell) = &selection {
