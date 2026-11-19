@@ -22,7 +22,6 @@ pub fn serialize_clipboard(slice: &Slice) -> Result<ClipboardContent, ModelError
 }
 
 pub(crate) fn serialize_with_schema(slice: &Slice, schema: Option<&Schema>) -> Result<ClipboardContent, ModelError> {
-    let plain_text = slice.content.text_between(0, slice.content.size(), Some("\n\n"), None);
     let internal = serde_json::to_vec(&json!({
         "format": FORMAT,
         "version": VERSION,
@@ -30,10 +29,11 @@ pub(crate) fn serialize_with_schema(slice: &Slice, schema: Option<&Schema>) -> R
     })).map_err(|error| ModelError::Serialization(error.to_string()))?;
     // Schemas can omit DOM serialization for their custom types. They can
     // still copy in the native format and provide a plain text alternative.
-    let html = schema.and_then(|schema| {
-        let data = serialize_for_clipboard(schema, slice.clone(), &ClipboardOptions::default()).ok()?;
-        html_fragment(data.dom.children()).ok()
-    });
+    let rich = schema.and_then(|schema| serialize_for_clipboard(schema, slice.clone(), &ClipboardOptions::default()).ok());
+    let (plain_text, html) = match rich {
+        Some(data) => (data.text, html_fragment(data.dom.children()).ok()),
+        None => (slice.content.text_between(0, slice.content.size(), Some("\n\n"), None), None),
+    };
     Ok(ClipboardContent { plain_text, html, internal: Some(internal) })
 }
 
@@ -47,11 +47,13 @@ pub fn paste_slice(
         if let Some(slice) = native_slice(schema, data.internal.as_deref()) {
             return Ok(Some(slice));
         }
-        if let Some(html) = data.html.as_deref().filter(|html| !html.is_empty()) {
-            return parse_from_clipboard(
-                schema, &data.plain_text, Some(parse_html(html)), false, context, &ClipboardOptions::default(),
-            );
-        }
+    }
+    if let Some(html) = data.html.as_deref().filter(|html| {
+        !html.is_empty() && (data.plain_text.is_empty() || (!plain_text && !in_code))
+    }) {
+        return parse_from_clipboard(
+            schema, &data.plain_text, Some(parse_html(html)), plain_text, context, &ClipboardOptions::default(),
+        );
     }
     if data.plain_text.is_empty() {
         return Ok(None);
@@ -285,6 +287,9 @@ mod tests {
         let text = code.content.first_child().unwrap();
         assert_eq!(text.text(), Some("line 1\nline 2"));
         assert!(text.marks().is_empty());
+
+        let html_only = ClipboardContent { html: clipboard.html, ..ClipboardContent::default() };
+        assert_eq!(paste_slice(schema, &html_only, true, &context).unwrap(), Some(rich));
     }
 
     #[test]
