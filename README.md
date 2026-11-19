@@ -67,6 +67,26 @@ The scripted binary accepts a JSON document, selection, and native event sequenc
 
 The release-mode benchmark is invoked separately as `--bench core` and `--bench surface` so each host starts in a fresh process. It reports total time, mean time per input, and on Linux the process's current and peak resident memory as JSON lines. The core run includes state, history, and display-list construction. The surface run additionally includes layout and rasterization at 900 × 760. CI publishes measurements from the Linux runner.
 
+### Benchmark results
+
+The figures below show one release run on GitHub Actions' Ubuntu runner. Times are per operation. Typing, undo, and redo show the mean across the indicated number of operations. Peak RSS covers the full workload in each fresh process. [CI run and raw JSONL artifact](https://github.com/Adiiitu12312/prosemirror-rs/actions/runs/44565536646)
+
+| Workload | Headless core | Sample surface |
+| --- | ---: | ---: |
+| Open 5,000 blocks | 23.58 ms | 206.96 ms |
+| Type 1,000 characters | 8.33 ms per character | 13.64 ms per character |
+| Paste a 500-block slice | 14.06 ms | 41.39 ms |
+| Undo 200 steps | 15.88 ms per step | 19.59 ms per step |
+| Redo 200 steps | 14.46 ms per step | 19.51 ms per step |
+| Peak RSS | 20.64 MiB | 57.18 MiB |
+
+### Behavior differences
+
+- Transform 1.12.7 computes inverted mirror indices from the full backing map array. The Rust port computes mirrors relative to the appended slice so they stay in range when the source is a sliced mapping. [Upstream `Mapping.appendMappingInverted`](https://code.haverbeke.berlin/prosemirror/prosemirror-transform/src/commit/fe4882e9aca29ae9a9841cb747624cf12c4da719/src/map.ts#L236)
+- Upstream can emit nested mark sets when inverting a group, which its JSON decoder rejects. The Rust port flattens the inversion while preserving operation order, so history can round-trip the result. [Upstream mark set inversion and JSON decoder](https://code.haverbeke.berlin/prosemirror/prosemirror-transform/src/commit/fe4882e9aca29ae9a9841cb747624cf12c4da719/src/mark_step.ts#L173)
+- With the pinned History 1.5.2, the unmodified Collab 1.3.1 redo scenario produces `ABDCE`. The Rust port retains the scenario and checks that result. [Collab redo test](https://github.com/ProseMirror/prosemirror-collab/blob/c019e4cd1e05504d403d98e6bfec67fe1a80c895/test/test-collab.ts) · [History selection restoration](https://code.haverbeke.berlin/prosemirror/prosemirror-history/src/commit/4042c6ce7be9fac86c850760cbbbf2651fc79017/src/history.ts)
+- Native paste uses plain text or the opaque slice envelope. The upstream browser uses DOM clipboard parsing and embeds open-depth context in HTML. Native IME and touch use host events with transaction comparisons in the differential suite. [Upstream View clipboard](https://code.haverbeke.berlin/prosemirror/prosemirror-view/src/commit/2a07ebc03ccfb526b43e60297465129a2cee8ca6/src/clipboard.ts) · [Upstream View input](https://code.haverbeke.berlin/prosemirror/prosemirror-view/src/commit/2a07ebc03ccfb526b43e60297465129a2cee8ca6/src/input.ts)
+
 ## Verification
 
 Run the JavaScript reference checks locally.
