@@ -7,7 +7,7 @@ use prosemirror_model::Node as ModelNode;
 use prosemirror_state::Selection;
 use prosemirror_test_builder::{builders, test_schema, ChildSpec, TaggedDoc};
 use prosemirror_transform::Step;
-use prosemirror_view::browser::{BrowserView, BrowserViewProps};
+use prosemirror_view::browser::{BrowserView, BrowserViewProps, MarkView, MarkViewFactory};
 use serde_json::json;
 use wasm_bindgen::{closure::Closure, JsCast};
 use wasm_bindgen_test::wasm_bindgen_test;
@@ -427,6 +427,23 @@ fn retains_marked_content_when_typing_in_front() {
 #[wasm_bindgen_test]
 fn retains_other_content_when_typing_inside_a_mark() {
     inside_marks_edit("bar", "baar", doc!(p!("foo", mark("em", vec!["baar".into()]), mark("strong", vec!["baz".into()]))));
+}
+
+#[wasm_bindgen_test]
+fn reads_only_the_content_dom_of_a_custom_mark_view() {
+    let factory: MarkViewFactory = Rc::new(|document, _, _| {
+        let outer = document.create_element("span")?;
+        outer.append_child(&document.create_text_node("decoration").into())?;
+        let content = document.create_element("span")?;
+        outer.append_child(&content)?;
+        Ok(MarkView::new(outer).with_content_dom(content))
+    });
+    let view = mount(doc!(p!("before ", mark("em", vec!["inside".into()]), " after")), BrowserViewProps {
+        mark_views: [("em".into(), factory)].into(),
+        ..Default::default()
+    });
+    replace_text(&view, "inside", "edited");
+    flushed(&view, doc!(p!("before ", mark("em", vec!["edited".into()]), " after")));
 }
 
 #[wasm_bindgen_test]

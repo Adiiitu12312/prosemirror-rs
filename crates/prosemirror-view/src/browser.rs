@@ -453,7 +453,7 @@ impl BrowserView {
     fn queue_pending_dom_records(&self) -> bool {
         self.0.borrow().observer.as_ref().is_some_and(|observer| {
             let mut pending = observer.pending.borrow_mut();
-            pending.extend(observer.dom.take_records().iter().filter_map(|record| record.dyn_into().ok()));
+            pending.extend(observer.dom.take_records().iter().filter_map(|record| record.dyn_into::<MutationRecord>().ok()));
             !pending.is_empty()
         })
     }

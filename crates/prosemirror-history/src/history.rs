@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use prosemirror_model::Schema;
+use prosemirror_model::{ModelError, Schema};
 use prosemirror_state::{EditorState, Plugin, PluginKey, SelectionBookmark, StateField, Transaction};
 use prosemirror_transform::{Mapping, Step, StepMap, Transform};
 use serde::{Deserialize, Serialize};
@@ -44,7 +44,7 @@ impl HistoryItem {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(from = "BranchJson")]
+#[serde(try_from = "BranchJson")]
 pub struct Branch {
     pub items: Vec<HistoryItem>,
     pub event_count: usize,
@@ -67,23 +67,32 @@ struct LegacyHistoryItem {
     selection: prosemirror_state::Selection,
 }
 
-impl From<BranchJson> for Branch {
-    fn from(branch: BranchJson) -> Self {
-        match branch {
+impl TryFrom<BranchJson> for Branch {
+    type Error = ModelError;
+
+    fn try_from(branch: BranchJson) -> Result<Self, Self::Error> {
+        Ok(match branch {
             BranchJson::Grouped { items, event_count } => Self { items, event_count },
             BranchJson::Legacy(items) => Self {
                 event_count: items.len(),
                 items: items
                     .into_iter()
-                    .map(|item| HistoryItem {
-                        map: item.step.get_map(),
-                        step: Some(item.inverted),
-                        selection: Some(item.selection.bookmark()),
-                        mirror_offset: None,
+                    .map(|item| {
+                        if matches!(item.step, Step::Custom(_)) {
+                            return Err(ModelError::Serialization(
+                                "Legacy history items cannot contain custom step maps".into(),
+                            ));
+                        }
+                        Ok(HistoryItem {
+                            map: item.step.get_map(),
+                            step: Some(item.inverted),
+                            selection: Some(item.selection.bookmark()),
+                            mirror_offset: None,
+                        })
                     })
-                    .collect(),
+                    .collect::<Result<_, _>>()?,
             },
-        }
+        })
     }
 }
 
@@ -488,7 +497,13 @@ impl StateField for HistoryField {
 
     fn apply(&self, tr: &Transaction, value: &Value) -> Value {
         let options = HistoryOptions { depth: self.depth, ..HistoryOptions::default() };
-        let history = serde_json::from_value(value.clone()).unwrap_or_default();
+        let history = match tr.before().schema() {
+            Some(schema) => deserialize_history(value, schema),
+            None => serde_json::from_value::<HistoryState>(value.clone()).ok().filter(|history| {
+                history.done.items.iter().chain(&history.undone.items)
+                    .all(|item| !matches!(item.step, Some(Step::Custom(_))))
+            }),
+        }.unwrap_or_default();
         record(history, tr, tr.initial_selection().bookmark(), options, false)
     }
 

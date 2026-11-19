@@ -183,16 +183,17 @@ impl Step {
         use std::collections::hash_map::Entry;
 
         let id = id.into();
-        if id.is_empty() {
-            return Err(ModelError::Serialization("Empty step JSON ID".into()));
+        let duplicate = |id: &str| ModelError::Serialization(format!("Duplicate use of step JSON ID {id}"));
+        if is_builtin_id(&id) {
+            return Err(duplicate(&id));
         }
-        if !is_builtin_id(&id) {
-            if let Entry::Vacant(slot) = registered_steps().write().unwrap().entry(id.clone()) {
+        match registered_steps().write().unwrap().entry(id) {
+            Entry::Vacant(slot) => {
                 slot.insert(decode);
-                return Ok(());
+                Ok(())
             }
+            Entry::Occupied(slot) => Err(duplicate(slot.key())),
         }
-        Err(ModelError::Serialization(format!("Duplicate use of step JSON ID {id}")))
     }
 
     /// Wrap an implementation using its registered JSON ID.

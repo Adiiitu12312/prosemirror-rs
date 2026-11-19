@@ -362,7 +362,8 @@ fn click_handlers(view: &BrowserView, pos: PositionAtCoords, event: &MouseEvent,
             return true;
         }
     }
-    config.providers().filter_map(handler).any(|click| click(view, pos.pos, event))
+    let mut handlers = config.providers().filter_map(handler);
+    handlers.any(|click| click(view, pos.pos, event))
 }
 
 fn triple_selection(doc: &ModelNode, inside: Option<usize>, select_nodes: bool) -> Option<Selection> {
