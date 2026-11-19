@@ -22,6 +22,18 @@ const BLUE: Color = Color::rgb(29, 101, 188);
 const SELECTION: Color = Color::rgba(80, 151, 234, 82);
 const GRID: Color = Color::rgb(181, 194, 210);
 const CODE: Color = Color::rgb(241, 244, 248);
+const SANS_FAMILY: &str = "Inter";
+const MONO_FAMILY: &str = "JetBrains Mono";
+const BUNDLED_FONTS: &[&[u8]] = &[
+    include_bytes!("../assets/Inter-Regular.ttf"),
+    include_bytes!("../assets/Inter-Bold.otf"),
+    include_bytes!("../assets/Inter-Italic.otf"),
+    include_bytes!("../assets/Inter-BoldItalic.otf"),
+    include_bytes!("../assets/JetBrainsMono-Regular.ttf"),
+    include_bytes!("../assets/JetBrainsMono-Bold.ttf"),
+    include_bytes!("../assets/JetBrainsMono-Italic.ttf"),
+    include_bytes!("../assets/JetBrainsMono-BoldItalic.ttf"),
+];
 
 pub struct SurfaceHost {
     width: u32,
@@ -47,12 +59,12 @@ pub struct SurfaceHost {
 
 impl SurfaceHost {
     pub fn new(width: u32, height: u32) -> Self {
-        Self::with_fonts(width, height, FontSystem::new())
+        Self::with_fonts(width, height, bundled_fonts(true))
     }
 
     /// Use the bundled SIL-licensed Inter font for reproducible headless output.
     pub fn deterministic(width: u32, height: u32) -> Self {
-        Self::with_font_data(width, height, vec![include_bytes!("../assets/Inter-Regular.ttf").to_vec()])
+        Self::with_fonts(width, height, bundled_fonts(false))
     }
 
     /// Construct a surface using caller-provided fonts, with no system font dependency.
@@ -228,6 +240,19 @@ impl SurfaceHost {
     }
 }
 
+fn bundled_fonts(system_fallback: bool) -> FontSystem {
+    let mut database = fontdb::Database::new();
+    for bytes in BUNDLED_FONTS {
+        database.load_font_data(bytes.to_vec());
+    }
+    if system_fallback {
+        database.load_system_fonts();
+    }
+    database.set_sans_serif_family(SANS_FAMILY);
+    database.set_monospace_family(MONO_FAMILY);
+    FontSystem::new_with_locale_and_db("en-US".into(), database)
+}
+
 struct PlacedBlock {
     source: DisplayNode,
     composition: Option<CompositionDisplay>,
@@ -345,7 +370,7 @@ impl Cluster {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct TextStyle {
     color: Color,
     background: Option<Color>,
@@ -363,6 +388,21 @@ impl Default for TextStyle {
 }
 
 impl TextStyle {
+    fn for_block(node: &DisplayNode) -> (Self, Metrics) {
+        let kind = node.node.type_name();
+        let heading = node.node.attrs().and_then(|attrs| attrs["level"].as_u64()).filter(|_| kind == "heading");
+        let metrics = match heading {
+            Some(1) => Metrics::new(31.0, 39.0),
+            Some(2) => Metrics::new(26.0, 34.0),
+            Some(3) => Metrics::new(22.0, 30.0),
+            Some(_) => Metrics::new(19.0, 26.0),
+            None => Metrics::new(16.0, 24.0),
+        };
+        let style = Self { bold: heading.is_some(), mono: kind == "code_block", ..Self::default() }
+            .with_decoration(&node.decorations);
+        (style, metrics)
+    }
+
     fn attrs(self) -> Attrs<'static> {
         Attrs::new()
             .family(if self.mono { Family::Monospace } else { Family::SansSerif })
@@ -619,18 +659,9 @@ impl Shaper<'_> {
     }
 
     fn layout_text(&mut self, node: &DisplayNode, x: f64, y: f64, width: f64, scene: &mut Scene) -> f64 {
-        let kind = node.node.type_name();
-        let code_block = kind == "code_block";
-        let heading = node.node.attrs().and_then(|attrs| attrs["level"].as_u64()).filter(|_| kind == "heading");
-        let (font_size, line_height) = match heading {
-            Some(1) => (31.0, 39.0),
-            Some(2) => (26.0, 34.0),
-            Some(3) => (22.0, 30.0),
-            Some(_) => (19.0, 26.0),
-            None => (16.0, 24.0),
-        };
-        let style = TextStyle { bold: heading.is_some(), mono: code_block, ..TextStyle::default() }
-            .with_decoration(&node.decorations);
+        let code_block = node.node.type_name() == "code_block";
+        let (style, metrics) = TextStyle::for_block(node);
+        let line_height = metrics.line_height;
         let from = node.content_from - self.base;
         let to = node.content_to - self.base;
         let mut units = Vec::new();
@@ -650,7 +681,7 @@ impl Shaper<'_> {
         let (inner_x, inner_y) = (x + padding, y + padding);
         let inner_width = (width - 2.0 * padding).max(10.0);
         let mut text_scene = Scene::default();
-        let buffer = shape_buffer(self.fonts, &text, &spans, style, inner_width, font_size, line_height);
+        let buffer = shape_buffer(self.fonts, &text, &spans, style, inner_width, metrics);
         let graphemes = text.grapheme_indices(true).map(|(i, text)| i..i + text.len()).collect::<Vec<_>>();
         let starts = BidiParagraphs::new(&text)
             .map(|line| line.as_ptr().addr() - text.as_ptr().addr()).collect::<Vec<_>>();
@@ -802,9 +833,9 @@ fn boundary_at_byte(spans: &[TextSpan], byte: usize, fallback: usize) -> usize {
 
 fn shape_buffer(
     fonts: &mut FontSystem, text: &str, spans: &[TextSpan], style: TextStyle,
-    width: f64, font_size: f32, line_height: f32,
+    width: f64, metrics: Metrics,
 ) -> Buffer {
-    let mut buffer = Buffer::new(fonts, Metrics::new(font_size, line_height));
+    let mut buffer = Buffer::new(fonts, metrics);
     buffer.set_size(Some(width as f32), None);
     let mut styled: Vec<(Range<usize>, TextStyle)> = Vec::new();
     for span in spans {
@@ -1236,6 +1267,7 @@ mod tests {
     use prosemirror_model::{Fragment, Node, Schema};
     use prosemirror_state::Selection;
     use prosemirror_view::DecorationGroup;
+    use serde_json::json;
 
     fn paragraph(schema: &Schema, text: &str) -> Node {
         let contents = Fragment::from_nodes(vec![schema.text(text, None)]);
@@ -1250,6 +1282,102 @@ mod tests {
         let mut frame = DisplayList::unmeasured(doc, selection, &DecorationGroup::default());
         frame.focused = true;
         frame
+    }
+
+    fn style_document() -> Node {
+        crate::setup::read_doc(&json!({"type":"doc", "content":[
+            {"type":"paragraph", "content":[
+                {"type":"text", "text":"a"},
+                {"type":"text", "text":"b", "marks":[{"type":"strong"}]},
+                {"type":"text", "text":"c", "marks":[{"type":"em"}]},
+                {"type":"text", "text":"d", "marks":[{"type":"code"}]},
+                {"type":"text", "text":"e", "marks":[{"type":"link", "attrs":{"href":"/guide"}}]},
+                {"type":"text", "text":"f", "marks":[{"type":"strike"}]},
+                {"type":"text", "text":"g", "marks":[{"type":"strong"}, {"type":"em"}]},
+                {"type":"text", "text":"h", "marks":[{"type":"strong"}, {"type":"code"}]},
+                {"type":"text", "text":"i", "marks":[{"type":"em"}, {"type":"code"}]},
+                {"type":"text", "text":"j", "marks":[{"type":"strong"}, {"type":"em"}, {"type":"code"}]}
+            ]},
+            {"type":"heading", "attrs":{"level":2}, "content":[{"type":"text", "text":"Head"}]},
+            {"type":"code_block", "content":[{"type":"text", "text":"Wi"}]}
+        ]}))
+    }
+
+    #[test]
+    fn marked_text_runs_resolve_their_own_styles() {
+        let doc = style_document();
+        let frame = frame(&doc, &Selection::cursor(1));
+        let block = &frame.blocks[0];
+        let mut units = Vec::new();
+        collect_units(&block.children, block.from, TextStyle::for_block(block).0, &mut units);
+        let (text, spans) = text_spans(&units);
+        assert_eq!(text, "abcdefghij");
+        let plain = TextStyle::default();
+        let bold = TextStyle { bold: true, ..plain };
+        let italic = TextStyle { italic: true, ..plain };
+        let code = TextStyle { mono: true, background: Some(CODE), ..plain };
+        let link = TextStyle { color: BLUE, underline: true, ..plain };
+        let strike = TextStyle { strikethrough: true, ..plain };
+        assert_eq!(spans.iter().map(|span| span.style).collect::<Vec<_>>(), [
+            plain, bold, italic, code, link, strike,
+            TextStyle { italic: true, ..bold },
+            TextStyle { bold: true, ..code },
+            TextStyle { italic: true, ..code },
+            TextStyle { bold: true, italic: true, ..code },
+        ]);
+        assert_eq!(bold.attrs().weight, Weight::BOLD);
+        assert_eq!(italic.attrs().style, Style::Italic);
+        assert_eq!(code.attrs().family, Family::Monospace);
+        assert_eq!(link.attrs().color_opt, Some(BLUE));
+    }
+
+    #[test]
+    fn textblock_kinds_resolve_weight_family_and_metrics() {
+        let doc = style_document();
+        let frame = frame(&doc, &Selection::cursor(1));
+        let expectations = [
+            ("paragraph", Family::SansSerif, Weight::NORMAL, 16.0, 24.0),
+            ("heading", Family::SansSerif, Weight::BOLD, 26.0, 34.0),
+            ("code_block", Family::Monospace, Weight::NORMAL, 16.0, 24.0),
+        ];
+        for (block, (kind, family, weight, size, line_height)) in frame.blocks.iter().zip(expectations) {
+            assert_eq!(block.node.type_name(), kind);
+            let (style, metrics) = TextStyle::for_block(block);
+            let attrs = style.attrs();
+            assert_eq!((attrs.family, attrs.weight, attrs.style), (family, weight, Style::Normal));
+            assert_eq!((metrics.font_size, metrics.line_height), (size, line_height));
+            assert!(!style.underline && !style.strikethrough);
+        }
+    }
+
+    #[test]
+    fn shaped_glyphs_use_actual_bold_italic_and_monospace_faces() {
+        let doc = style_document();
+        let frame = frame(&doc, &Selection::cursor(1));
+        let mut host = SurfaceHost::deterministic(500, 250);
+        host.update_layout(&frame, &BlockUpdate::between(None, &doc));
+        let paragraph = [
+            "Inter-Regular", "Inter-Bold", "Inter-Italic", "JetBrainsMono-Regular",
+            "Inter-Regular", "Inter-Regular", "Inter-BoldItalic", "JetBrainsMono-Bold",
+            "JetBrainsMono-Italic", "JetBrainsMono-BoldItalic",
+        ];
+        let heading = ["Inter-Bold"; 4];
+        let code = ["JetBrainsMono-Regular"; 2];
+        for (block, expected) in host.blocks.iter().zip([paragraph.as_slice(), &heading, &code]) {
+            assert_eq!(block.scene.glyphs.len(), expected.len());
+            for (glyph, expected) in block.scene.glyphs.iter().zip(expected) {
+                let face = host.fonts.db().face(glyph.physical.cache_key.font_id).unwrap();
+                assert_eq!(face.post_script_name.as_str(), *expected);
+                assert_eq!(face.weight.0, if expected.contains("Bold") { 700 } else { 400 });
+                assert_eq!(face.style, if expected.contains("Italic") { Style::Italic } else { Style::Normal });
+                assert_eq!(face.monospaced, expected.starts_with("JetBrainsMono"));
+            }
+        }
+        let code = &frame.blocks[2];
+        let start = host.coords_at_pos(code.content_from, 1).unwrap().left;
+        let between = host.coords_at_pos(code.content_from + 1, 1).unwrap().left;
+        let end = host.coords_at_pos(code.content_to, -1).unwrap().left;
+        assert!(((between - start) - (end - between)).abs() < 0.01);
     }
 
     #[test]
@@ -1334,8 +1462,6 @@ mod tests {
 
     #[test]
     fn table_geometry_measures_explicit_widths_and_spanning_cells() {
-        use serde_json::json;
-
         let mut nodes = prosemirror_schema_basic::nodes();
         nodes.extend(prosemirror_tables::table_nodes(prosemirror_tables::TableNodesOptions::default()));
         let schema = Schema::new(nodes, prosemirror_schema_basic::marks());
