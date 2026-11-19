@@ -20,6 +20,17 @@ fn reference_definitions_supply_links_without_becoming_nodes() {
 }
 
 #[test]
+fn normalizes_internationalized_link_hosts_and_display_text() {
+    let parser = default_markdown_parser();
+    let doc = parser.parse("<https://xn--mnich-kva.example/a%20b>").unwrap();
+    assert_eq!(doc.text_content(), "https://münich.example/a b");
+    let mark = &doc.child(0).child(0).marks()[0];
+    assert_eq!(mark.attrs.as_ref().unwrap()["href"], "https://xn--mnich-kva.example/a%20b");
+    let same = parser.parse("<https://münich.example/a%20b>").unwrap();
+    assert_eq!(doc, same);
+}
+
+#[test]
 fn passes_an_environment_and_complete_token_stream_to_custom_parsers() {
     let parser = MarkdownParser::new(
         schema().clone(),

@@ -1,0 +1,21 @@
+[package]
+name = "prosemirror-example-setup"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Example editor bindings and plugin setup for ProseMirror"
+
+[dependencies]
+prosemirror-commands.workspace = true
+prosemirror-dropcursor.workspace = true
+prosemirror-gapcursor.workspace = true
+prosemirror-history.workspace = true
+prosemirror-inputrules.workspace = true
+prosemirror-keymap.workspace = true
+prosemirror-model.workspace = true
+prosemirror-schema-list.workspace = true
+prosemirror-state.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+prosemirror-test-builder.workspace = true

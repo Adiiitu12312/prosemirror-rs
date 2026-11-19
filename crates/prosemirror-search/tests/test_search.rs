@@ -365,8 +365,14 @@ fn filters_replacements_by_emphasis() {
     test_command(
         config,
         None,
-        node!("doc"; p!("this one"), p!("that ", em("one")), node!("blockquote"; p!("another ", em("one")))),
-        Some(node!("doc"; p!("this one"), p!("that ", em("two")), node!("blockquote"; p!("another ", em("two")))),
+        node!("doc";
+            p!("this one"), p!("that ", em("one")),
+            node!("blockquote"; p!("another ", em("one"))),
+        ),
+        Some(node!("doc";
+            p!("this one"), p!("that ", em("two")),
+            node!("blockquote"; p!("another ", em("two"))),
+        )),
         replace_all,
     );
 }
@@ -391,4 +397,12 @@ fn updates_query_with_typed_filter_and_remaps_active_highlight() {
     assert_eq!((decorations[1].from, decorations[1].to), (5, 8));
     let DecorationType::Inline { attrs, .. } = &decorations[1].kind else { panic!("expected inline decoration") };
     assert_eq!(attrs["class"], "ProseMirror-active-search-match");
+}
+
+#[test]
+fn replaces_zero_width_matches_without_revisiting_them() {
+    let state = state(regexp("(?=o)", "x"), None, p!("one one"));
+    let mut updated = None;
+    assert!(replace_all(&state, Some(&mut |tr| updated = Some(state.apply(&tr)))));
+    assert_eq!(updated.unwrap().doc, p!("xone xone").node);
 }

@@ -108,7 +108,7 @@ fn build_match_decorations(
             [("class".into(), class.into())].into(),
             Value::Null,
         ));
-        pos = next.to.max(pos + 1);
+        pos = next.to.max(next.from + 1).max(pos + 1);
     }
     DecorationSet::create(&state.doc, decorations)
 }
@@ -251,7 +251,7 @@ pub fn replace_all(state: &EditorState, dispatch: Dispatch<'_>) -> bool {
     let mut pos = range.from;
     let mut matches = Vec::new();
     while let Some(next) = search.query.find_next(state, pos, range.to) {
-        pos = next.to.max(pos + 1);
+        pos = next.to.max(next.from + 1).max(pos + 1);
         matches.push(next);
     }
     let mut tr = state.tr();

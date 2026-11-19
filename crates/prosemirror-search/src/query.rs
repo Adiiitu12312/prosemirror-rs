@@ -56,6 +56,10 @@ impl RegexMatch {
         String::from_utf16_lossy(&self.input)
     }
 
+    pub fn input_utf16(&self) -> &[u16] {
+        &self.input
+    }
+
     pub fn group(&self, index: usize) -> Option<String> {
         self.group_range(index)
             .map(|range| String::from_utf16_lossy(&self.input[range]))
@@ -63,6 +67,10 @@ impl RegexMatch {
 
     pub fn group_range(&self, index: usize) -> Option<Range<usize>> {
         self.inner.group(index)
+    }
+
+    pub fn group_utf16(&self, index: usize) -> Option<&[u16]> {
+        self.group_range(index).map(|range| &self.input[range])
     }
 
     pub fn named_group(&self, name: &str) -> Option<String> {
@@ -149,9 +157,9 @@ impl SearchQuery {
                     };
                     let mut windows = text.windows(needle.len());
                     let index = if forward {
-                        windows.position(|part| part == needle)
+                        windows.position(|part| part == needle.as_slice())
                     } else {
-                        windows.rposition(|part| part == needle)
+                        windows.rposition(|part| part == needle.as_slice())
                     }?;
                     Some(SearchResult {
                         from: offset + index,
@@ -258,7 +266,7 @@ fn unquote(string: &str, literal: bool) -> String {
     let mut result = String::with_capacity(string.len());
     while let Some(ch) = chars.next() {
         if ch == '\\' {
-            if let Some(escaped) = chars.next_if(|next| matches!(next, 'n' | 'r' | 't' | '\\')) {
+            if let Some(escaped) = chars.next_if(|next| matches!(*next, 'n' | 'r' | 't' | '\\')) {
                 result.push(match escaped {
                     'n' => '\n',
                     'r' => '\r',
@@ -326,8 +334,8 @@ pub fn valid_regexp(source: &str) -> bool {
 fn text_content(node: &Node) -> Vec<u16> {
     fn collect(node: &Node, output: &mut Vec<u16>) {
         for child in &node.content().children {
-            if let Some(text) = child.text() {
-                output.extend(text.encode_utf16());
+            if let Some(text) = child.text_utf16() {
+                output.extend_from_slice(&text);
             } else if child.is_leaf() {
                 output.push(0xfffc);
             } else {

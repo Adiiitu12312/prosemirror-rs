@@ -1,8 +1,10 @@
 use std::collections::HashMap;
 
+use markdown_it::parser::linkfmt::{LinkFormatter, MDLinkFormatter};
 use markdown_it::parser::inline::{Text, TextSpecial};
 use markdown_it::plugins::cmark::{self, block, inline};
 use markdown_it::{MarkdownIt, Node as AstNode};
+use mdurl::urlencode;
 use serde_json::Value;
 
 use crate::MarkdownError;
@@ -63,7 +65,53 @@ impl Default for CommonMarkTokenizer {
     fn default() -> Self {
         let mut parser = MarkdownIt::new();
         cmark::add(&mut parser);
+        parser.link_formatter = Box::new(CommonMarkLinkFormatter);
         Self { parser }
+    }
+}
+
+#[derive(Debug)]
+struct CommonMarkLinkFormatter;
+
+impl LinkFormatter for CommonMarkLinkFormatter {
+    fn validate_link(&self, url: &str) -> Option<()> {
+        MDLinkFormatter::new().validate_link(url.trim())
+    }
+
+    fn normalize_link(&self, url: &str) -> String {
+        let mut parsed = mdurl::parse_url(url);
+        recode_hostname(&mut parsed, |label| {
+            if label.is_ascii() {
+                Some(label.to_owned())
+            } else {
+                idna::punycode::encode_str(label).map(|encoded| format!("xn--{encoded}"))
+            }
+        });
+        urlencode::encode(&parsed.to_string(), urlencode::ENCODE_DEFAULT_CHARS, true).into_owned()
+    }
+
+    fn normalize_link_text(&self, url: &str) -> String {
+        let mut parsed = mdurl::parse_url(url);
+        recode_hostname(&mut parsed, |label| {
+            label.strip_prefix("xn--").map_or_else(
+                || Some(label.to_owned()),
+                |encoded| idna::punycode::decode_to_string(&encoded.to_ascii_lowercase()),
+            )
+        });
+        urlencode::decode(&parsed.to_string(), urlencode::DECODE_DEFAULT_CHARS.add(b'%')).into_owned()
+    }
+}
+
+fn recode_hostname(url: &mut mdurl::Url, recode: impl Fn(&str) -> Option<String>) {
+    if !matches!(url.protocol.as_deref(), None | Some("http:" | "https:" | "mailto:")) {
+        return;
+    }
+    if let Some(hostname) = &mut url.hostname {
+        if let Some(labels) = hostname.split(['.', '\u{3002}', '\u{ff0e}', '\u{ff61}'])
+            .map(recode).collect::<Option<Vec<_>>>()
+        {
+            *hostname = labels.join(".");
+        }
     }
 }
 

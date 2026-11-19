@@ -6,7 +6,9 @@ license.workspace = true
 description = "CommonMark parser and serializer for the ProseMirror document model"
 
 [dependencies]
+idna = "=0.3.0"
 markdown-it = { version = "=0.6.1", default-features = false }
+mdurl = "=0.3.1"
 prosemirror-model.workspace = true
 prosemirror-schema-basic.workspace = true
 regex = "1"

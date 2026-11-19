@@ -468,17 +468,28 @@ fn inline_text(text: &str, marks: &[Mark]) -> Option<Node> {
 }
 
 fn split_leading(text: &str) -> (&str, &str) {
-    static PATTERN: OnceLock<Regex> = OnceLock::new();
-    let pattern = PATTERN.get_or_init(|| Regex::new(r"(?m)^([\s\x{feff}]*)([^\r\n\x{2028}\x{2029}]*)$").unwrap());
-    let captured = pattern.captures(text).expect("every text has a first line");
-    (captured.get(1).unwrap().as_str(), captured.get(2).unwrap().as_str())
+    let rest = text.trim_start_matches(js_whitespace);
+    let leading = &text[..text.len() - rest.len()];
+    let first_line = &rest[..rest.find(line_terminator).unwrap_or(rest.len())];
+    (leading, first_line)
 }
 
 fn split_trailing(text: &str) -> (&str, &str) {
-    static PATTERN: OnceLock<Regex> = OnceLock::new();
-    let pattern = PATTERN.get_or_init(|| Regex::new(r"(?m)^([^\r\n\x{2028}\x{2029}]*?)([\s\x{feff}]*)$").unwrap());
-    let captured = pattern.captures(text).expect("every text has a first line");
-    (captured.get(1).unwrap().as_str(), captured.get(2).unwrap().as_str())
+    let first_line = &text[..text.find(line_terminator).unwrap_or(text.len())];
+    let rest = first_line.trim_end_matches(js_whitespace);
+    let tail = &text[rest.len()..];
+    let non_whitespace = tail.trim_start_matches(js_whitespace);
+    let whitespace = &tail[..tail.len() - non_whitespace.len()];
+    let end = if non_whitespace.is_empty() {
+        whitespace.len()
+    } else {
+        whitespace.rfind(line_terminator).unwrap_or(whitespace.len())
+    };
+    (rest, &whitespace[..end])
+}
+
+fn line_terminator(ch: char) -> bool {
+    matches!(ch, '\n' | '\r' | '\u{2028}' | '\u{2029}')
 }
 
 fn text_attr<'a>(node: &'a Node, key: &str) -> Option<&'a str> {
