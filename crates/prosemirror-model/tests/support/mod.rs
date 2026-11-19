@@ -271,4 +271,3 @@ pub(crate) fn run(suite: &str, index: usize) {
         _ => panic!("unknown test suite {suite}"),
     }
 }
-
