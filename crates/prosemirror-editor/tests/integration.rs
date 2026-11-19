@@ -2,6 +2,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 
 use prosemirror_editor::{
     BlockUpdate, ClipboardContent, ClipboardEvent, CompositionEvent, Decoration, DecorationGroup,
@@ -451,4 +452,48 @@ fn routes_transformed_paste_and_clears_a_prevented_drag_preview() {
     assert_eq!(editor.state().doc.text_content(), "nativeabc");
     assert_eq!(*calls.borrow(), ["transform direct", "transform view", "drop direct"]);
     assert!(editor.host().frame.as_ref().unwrap().drag.is_none());
+}
+
+#[test]
+fn clears_drag_preview_when_dispatch_filters_or_intercepts_drop() {
+    let filter_called = Arc::new(AtomicBool::new(false));
+    let seen = filter_called.clone();
+    let filter = Plugin::new(PluginKey::new("filter-drop"), None)
+        .with_filter_transaction(move |tr, _| {
+            if tr.get_meta("uiEvent").and_then(Value::as_str) == Some("drop") {
+                seen.store(true, Ordering::Relaxed);
+                return false;
+            }
+            true
+        });
+    let filtered = editor(state(doc!(p!("one two")).node, vec![filter]), EditorProps::default());
+
+    let dispatch_called = Arc::new(AtomicBool::new(false));
+    let seen = dispatch_called.clone();
+    let intercepted = editor(state(doc!(p!("one two")).node, Vec::new()), EditorProps {
+        dispatch_transaction: Some(Rc::new(move |state, tr| {
+            if tr.get_meta("uiEvent").and_then(Value::as_str) == Some("drop") {
+                seen.store(true, Ordering::Relaxed);
+                return None;
+            }
+            Some(state.apply(&tr))
+        })),
+        ..EditorProps::default()
+    });
+
+    for (mut editor, handled, called) in [(filtered, false, filter_called), (intercepted, true, dispatch_called)] {
+        select(&mut editor, Selection::text(1, 4));
+        assert!(editor.handle(Event::Drag(DragEvent::Start)).unwrap());
+        assert!(editor.handle(Event::Drag(DragEvent::Over(point(8)))).unwrap());
+        assert!(editor.host().frame.as_ref().unwrap().drag.is_some());
+
+        let before = editor.host().draws;
+        let event = Event::Drag(DragEvent::Drop { point: point(8), slice: None, copy: false });
+        assert_eq!(editor.handle(event).unwrap(), handled);
+        assert!(called.load(Ordering::Relaxed));
+        assert_eq!(editor.state().doc.text_content(), "one two");
+        assert_eq!(editor.state().selection, Selection::text(1, 4));
+        assert_eq!(editor.host().draws, before + 1);
+        assert!(editor.host().frame.as_ref().unwrap().drag.is_none());
+    }
 }

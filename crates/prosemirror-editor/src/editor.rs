@@ -57,6 +57,18 @@ struct Dragging {
     over: Option<usize>,
 }
 
+enum DispatchOutcome {
+    Applied,
+    Intercepted,
+    Filtered,
+}
+
+impl DispatchOutcome {
+    fn handled(self) -> bool {
+        !matches!(self, Self::Filtered)
+    }
+}
+
 pub struct Editor<H: Host> {
     state: EditorState,
     host: H,
@@ -128,23 +140,27 @@ impl<H: Host> Editor<H> {
     pub fn redraw(&mut self) { self.render(None); }
 
     pub fn dispatch(&mut self, transaction: Transaction) -> Result<bool, EditorError> {
+        self.dispatch_transaction(transaction).map(DispatchOutcome::handled)
+    }
+
+    fn dispatch_transaction(&mut self, transaction: Transaction) -> Result<DispatchOutcome, EditorError> {
         if transaction.before() != &self.state.doc {
             return Err(EditorError::MismatchedTransaction);
         }
         if let Some(dispatch) = &self.props.dispatch_transaction {
-            let Some(state) = dispatch(&self.state, transaction) else { return Ok(true) };
+            let Some(state) = dispatch(&self.state, transaction) else { return Ok(DispatchOutcome::Intercepted) };
             self.update_state(state);
-            return Ok(true);
+            return Ok(DispatchOutcome::Applied);
         }
         let applied = self.state.apply_transaction(&transaction);
         if applied.transactions.is_empty() {
-            return Ok(false);
+            return Ok(DispatchOutcome::Filtered);
         }
         for tr in &applied.transactions {
             self.map_interactions(tr);
         }
         self.replace_state(applied.state);
-        Ok(true)
+        Ok(DispatchOutcome::Applied)
     }
 
     pub fn handle(&mut self, event: Event) -> Result<bool, EditorError> {
@@ -685,21 +701,21 @@ impl<H: Host> Editor<H> {
 
     fn drop_at(&mut self, point: Point, slice: Option<Slice>, copy: bool) -> Result<bool, EditorError> {
         let drag = self.drag.take();
+        let was_dragging = drag.is_some();
         let Some(hit) = self.host.pos_at_coords(point) else { self.paint(); return Ok(false) };
-        let moved = drag.is_some() && !copy && slice.is_none();
+        let moved = was_dragging && !copy && slice.is_none();
         let slice = slice.or_else(|| drag.as_ref().map(|drag| drag.slice.clone()))
             .map(|slice| self.transform_paste(slice, false));
         let empty = Slice::empty();
         let action = self.props.providers(&self.state).filter_map(|props| props.handle_drop.as_ref())
             .map(|handle| handle(&self.state, slice.as_ref().unwrap_or(&empty), hit.pos, moved)).find(handled);
-        if action.is_some() {
-            let previous_doc = self.state.doc.clone();
-            let previous_selection = self.state.selection.clone();
-            let result = self.run_action(action);
-            if drag.is_some() && self.state.doc.ptr_eq(&previous_doc) && self.state.selection == previous_selection {
-                self.paint();
+        match action {
+            Some(EventAction::Dispatch(tr)) => return self.dispatch_drop(*tr, was_dragging),
+            Some(EventAction::Prevent) => {
+                if was_dragging { self.paint(); }
+                return Ok(true);
             }
-            return result;
+            _ => {}
         }
         let Some(slice) = slice else { self.paint(); return Ok(false) };
         let insert = drop_point(&self.state.doc, hit.pos, &slice).unwrap_or(hit.pos);
@@ -730,7 +746,15 @@ impl<H: Host> Editor<H> {
             Selection::between(&tr.doc().resolve(start)?, &tr.doc().resolve(end)?, 1)
         };
         tr.set_selection(selection).set_meta("uiEvent", json!("drop"));
-        self.dispatch(tr)
+        self.dispatch_drop(tr, was_dragging)
+    }
+
+    fn dispatch_drop(&mut self, transaction: Transaction, was_dragging: bool) -> Result<bool, EditorError> {
+        let outcome = self.dispatch_transaction(transaction);
+        if was_dragging && !matches!(&outcome, Ok(DispatchOutcome::Applied)) {
+            self.paint();
+        }
+        outcome.map(DispatchOutcome::handled)
     }
 
     fn event_stopped(&self, event: &Event) -> bool {
