@@ -1,4 +1,6 @@
 // Ported from prosemirror-history 1.5.2, test/test-history.ts.
+use std::sync::Arc;
+
 use prosemirror_history::{
     close_history, history, history_input, is_history_transaction, redo, redo_depth, undo, undo_depth,
     HistoryInput, HistoryOptions, HistoryState, HISTORY_KEY,
@@ -339,12 +341,43 @@ fn history_input_respects_editability_and_tags_generated_transactions() {
     assert!(history_input(&state, true, HistoryInput::Undo, |tr| result = Some(tr)));
     let tr = result.take().unwrap();
     assert!(is_history_transaction(&tr));
+    assert_eq!(tr.get_meta(HISTORY_KEY).unwrap()["redo"], false);
+    let mut legacy = tr.clone();
+    legacy.set_meta(HISTORY_KEY, tr.get_meta(HISTORY_KEY).unwrap().clone());
+    let legacy_state = state.apply(&legacy);
     state = state.apply(&tr);
+    assert_eq!(state.get_plugin_state(HISTORY_KEY), legacy_state.get_plugin_state(HISTORY_KEY));
     assert!(!history_input(&state, false, HistoryInput::Redo, |_| panic!("redo in read-only editor")));
     assert!(history_input(&state, true, HistoryInput::Redo, |tr| result = Some(tr)));
     let tr = result.take().unwrap();
     assert!(is_history_transaction(&tr));
+    assert_eq!(tr.get_meta(HISTORY_KEY).unwrap()["redo"], true);
     assert_eq!(tr.doc(), &doc!(p!("abc")).node);
+}
+
+#[test]
+fn selection_only_transactions_share_history_and_explicit_json_overrides_it() {
+    let mut state = default_state();
+    type_text(&mut state, "a");
+    let mut selection = state.tr();
+    selection.set_selection(Selection::cursor(1));
+    let mut next = state.apply(&selection);
+    let typed = |state: &EditorState| {
+        state.get_typed_plugin_state::<Arc<HistoryState>>(HISTORY_KEY).unwrap().clone()
+    };
+    assert!(Arc::ptr_eq(&typed(&state), &typed(&next)));
+    assert_eq!(next.get_plugin_state(HISTORY_KEY).unwrap()["done"]["event_count"], 1);
+
+    next.plugin_states.insert(HISTORY_KEY.into(), serde_json::to_value(HistoryState::default()).unwrap());
+    next = next.reconfigure(next.plugins.clone()).unwrap();
+    assert_eq!(undo_depth(&next), 0);
+    let mut edit = next.tr();
+    edit.insert_text_at_selection("x");
+    next = next.apply(&edit);
+    assert_eq!(undo_depth(&next), 1);
+    undo_once(&mut next);
+    assert_eq!(next.doc, doc!(p!("a")).node);
+    assert_eq!(undo_depth(&next), 0);
 }
 
 #[test]
@@ -584,6 +617,16 @@ fn legacy_history_json_still_has_undoable_steps() {
         }],
         "undone": []
     }));
+    let plugin = state.plugins[0].clone();
+    let fields = [("history", &plugin)];
+    let serialized = state.to_json_with_plugins(&fields).unwrap();
+    let mut restored = EditorState::from_json_with_plugins(
+        &state.schema, &serialized, vec![plugin.clone()], &fields,
+    ).unwrap();
+    assert_eq!(restored.to_json_with_plugins(&fields).unwrap(), serialized);
+    assert_eq!(undo_depth(&restored), 1);
+    undo_once(&mut restored);
+    assert_eq!(restored.doc, doc!(p!()).node);
     assert_eq!(undo_depth(&state), 1);
     undo_once(&mut state);
     assert_eq!(state.doc, doc!(p!()).node);

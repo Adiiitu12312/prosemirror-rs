@@ -9,7 +9,7 @@ description = "Pure Rust undo/redo history plugin matching ProseMirror history"
 prosemirror-model = { workspace = true }
 prosemirror-transform = { workspace = true }
 prosemirror-state = { workspace = true }
-serde = { workspace = true }
+serde = { workspace = true, features = ["rc"] }
 serde_json = { workspace = true }
 
 [dev-dependencies]

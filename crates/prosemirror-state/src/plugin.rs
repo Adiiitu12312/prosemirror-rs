@@ -32,7 +32,7 @@ impl PluginKey {
     }
 
     pub fn get_state<'a>(&self, state: &'a EditorState) -> Option<&'a Value> {
-        state.plugin_states.get(&self.name)
+        state.get_exact_plugin_state(&self.name)
     }
 }
 
@@ -113,9 +113,21 @@ pub trait TypedStateField: Send + Sync {
 
 pub(crate) type ErasedValue = Arc<dyn Any + Send + Sync>;
 
+type SerializeField<T> = fn(&T) -> Value;
+type DeserializeField<T> = fn(&Value, &EditorState) -> Option<T>;
+
+struct TypedField<F: TypedStateField> {
+    field: F,
+    serialize: Option<SerializeField<F::Value>>,
+    deserialize: Option<DeserializeField<F::Value>>,
+}
+
 pub(crate) trait ErasedStateField: Send + Sync {
     fn init(&self, config: &EditorStateConfig, state: &EditorState) -> ErasedValue;
     fn accepts(&self, value: &ErasedValue) -> bool;
+    fn has_json(&self) -> bool;
+    fn serialize(&self, value: &ErasedValue) -> Option<Value>;
+    fn deserialize(&self, json: &Value, state: &EditorState) -> Option<ErasedValue>;
     fn apply(
         &self,
         tr: &Arc<Transaction>,
@@ -125,13 +137,27 @@ pub(crate) trait ErasedStateField: Send + Sync {
     ) -> ErasedValue;
 }
 
-impl<T: TypedStateField> ErasedStateField for T {
+impl<F: TypedStateField> ErasedStateField for TypedField<F> {
     fn init(&self, config: &EditorStateConfig, state: &EditorState) -> ErasedValue {
-        Arc::new(TypedStateField::init(self, config, state))
+        Arc::new(self.field.init(config, state))
     }
 
     fn accepts(&self, value: &ErasedValue) -> bool {
-        value.is::<T::Value>()
+        value.is::<F::Value>()
+    }
+
+    fn has_json(&self) -> bool {
+        self.serialize.is_some()
+    }
+
+    fn serialize(&self, value: &ErasedValue) -> Option<Value> {
+        let serialize = self.serialize?;
+        Some(serialize(value.downcast_ref::<F::Value>().expect("matching plugin field type")))
+    }
+
+    fn deserialize(&self, json: &Value, state: &EditorState) -> Option<ErasedValue> {
+        let deserialize = self.deserialize?;
+        Some(Arc::new(deserialize(json, state)?))
     }
 
     fn apply(
@@ -141,8 +167,40 @@ impl<T: TypedStateField> ErasedStateField for T {
         old_state: &EditorState,
         new_state: &EditorState,
     ) -> ErasedValue {
-        let typed = value.downcast_ref::<T::Value>().expect("matching plugin field type");
-        Arc::new(TypedStateField::apply_shared(self, tr, typed, old_state, new_state))
+        let typed = value.downcast_ref::<F::Value>().expect("matching plugin field type");
+        Arc::new(self.field.apply_shared(tr, typed, old_state, new_state))
+    }
+}
+
+pub(crate) struct StoredTypedState {
+    pub(crate) value: ErasedValue,
+    field: Arc<dyn ErasedStateField>,
+    json: OnceLock<Option<Value>>,
+}
+
+impl StoredTypedState {
+    pub(crate) fn new(
+        value: ErasedValue,
+        field: &Arc<dyn ErasedStateField>,
+        source_json: Option<&Value>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            value,
+            field: Arc::clone(field),
+            json: source_json.map_or_else(OnceLock::new, |json| OnceLock::from(Some(json.clone()))),
+        })
+    }
+
+    pub(crate) fn for_field(self: &Arc<Self>, field: &Arc<dyn ErasedStateField>) -> Arc<Self> {
+        if Arc::ptr_eq(&self.field, field) {
+            Arc::clone(self)
+        } else {
+            Self::new(Arc::clone(&self.value), field, None)
+        }
+    }
+
+    pub(crate) fn json(&self) -> Option<&Value> {
+        self.json.get_or_init(|| self.field.serialize(&self.value)).as_ref()
     }
 }
 
@@ -186,7 +244,26 @@ impl Plugin {
     }
 
     pub fn with_typed_state_field(mut self, field: impl TypedStateField + 'static) -> Self {
-        self.typed_field = Some(Arc::new(field));
+        self.typed_field = Some(Arc::new(TypedField { field, serialize: None, deserialize: None }));
+        self
+    }
+
+    /// Set a typed state field with a JSON representation computed when requested.
+    ///
+    /// This replaces the JSON-only field. The decoder receives the partially
+    /// initialized editor state, including its document and schema.
+    pub fn with_serializable_typed_state_field<F: TypedStateField + 'static>(
+        mut self,
+        field: F,
+        serialize: fn(&F::Value) -> Value,
+        deserialize: fn(&Value, &EditorState) -> Option<F::Value>,
+    ) -> Self {
+        self.field = None;
+        self.typed_field = Some(Arc::new(TypedField {
+            field,
+            serialize: Some(serialize),
+            deserialize: Some(deserialize),
+        }));
         self
     }
 

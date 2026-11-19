@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
 use prosemirror_model::{ModelError, Schema};
-use prosemirror_state::{EditorState, Plugin, PluginKey, Selection, SelectionBookmark, StateField, Transaction};
+use prosemirror_state::{
+    EditorState, EditorStateConfig, Plugin, PluginKey, Selection, SelectionBookmark, StateField,
+    Transaction, TypedStateField,
+};
 use prosemirror_transform::{Mapping, Step, StepMap, Transform};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -370,10 +373,7 @@ impl HistoryState {
         options: HistoryOptions,
         preserve_items: bool,
     ) -> Self {
-        if let Some(history) = tr.get_meta(HISTORY_KEY).and_then(read_meta) {
-            return history.state;
-        }
-        if tr.get_meta(CLOSE_HISTORY_KEY).and_then(Value::as_bool) == Some(true) {
+        if closes_history(tr) {
             self.close_event();
         }
         if !tr.doc_changed() {
@@ -382,7 +382,7 @@ impl HistoryState {
 
         let appended = tr.appended_transaction();
         let maps = &tr.mapping().maps;
-        if let Some(history) = appended.and_then(|tr| tr.get_meta(HISTORY_KEY)).and_then(read_meta) {
+        if let Some(history) = appended.and_then(|tr| read_meta(tr, None)) {
             if history.redo {
                 self.done.add_transform(&tr.transform, None, options, preserve_items);
                 self.prev_ranges = Some(ranges_for(maps));
@@ -425,14 +425,29 @@ impl HistoryState {
     }
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct HistoryMeta {
     redo: bool,
-    state: HistoryState,
+    state: Arc<HistoryState>,
 }
 
-fn read_meta(value: &Value) -> Option<HistoryMeta> {
-    serde_json::from_value(value.clone()).ok()
+fn typed_meta(tr: &Transaction) -> Option<&HistoryMeta> {
+    tr.get_typed_meta(HISTORY_KEY).filter(|_| !tr.meta.contains_key(HISTORY_KEY))
+}
+
+fn read_meta(tr: &Transaction, schema: Option<&Schema>) -> Option<HistoryMeta> {
+    if let Some(history) = typed_meta(tr) {
+        return Some(history.clone());
+    }
+    let mut history: HistoryMeta = serde_json::from_value(tr.get_meta(HISTORY_KEY)?.clone()).ok()?;
+    if let Some(schema) = schema {
+        rebind_history(Arc::make_mut(&mut history.state), schema)?;
+    }
+    Some(history)
+}
+
+fn closes_history(tr: &Transaction) -> bool {
+    tr.get_meta(CLOSE_HISTORY_KEY).and_then(Value::as_bool) == Some(true)
 }
 
 fn add_to_history(tr: &Transaction) -> bool {
@@ -505,7 +520,14 @@ impl StateField for HistoryField {
                     .all(|item| !matches!(item.step, Some(Step::Custom(_))))
             }),
         }.unwrap_or_default();
-        record(history, tr, tr.initial_selection().bookmark(), options, false)
+        serialize_history(&update_history(
+            Arc::new(history),
+            tr,
+            tr.initial_selection().bookmark(),
+            options,
+            false,
+            tr.before().schema(),
+        ))
     }
 
     fn apply_with_state(
@@ -515,25 +537,60 @@ impl StateField for HistoryField {
         old_state: &EditorState,
         _new_state: &EditorState,
     ) -> Value {
-        record(
-            deserialize_history(value, &old_state.schema).unwrap_or_default(),
+        serialize_history(&update_history(
+            Arc::new(deserialize_history(value, &old_state.schema).unwrap_or_default()),
             tr,
             old_state.selection.bookmark(),
             history_options(old_state),
             must_preserve_items(old_state),
+            Some(&old_state.schema),
+        ))
+    }
+}
+
+struct CachedHistoryField;
+
+impl TypedStateField for CachedHistoryField {
+    type Value = Arc<HistoryState>;
+
+    fn init(&self, _config: &EditorStateConfig, _state: &EditorState) -> Self::Value {
+        Arc::default()
+    }
+
+    fn apply(
+        &self,
+        tr: &Transaction,
+        value: &Self::Value,
+        old_state: &EditorState,
+        _new_state: &EditorState,
+    ) -> Self::Value {
+        update_history(
+            Arc::clone(value),
+            tr,
+            old_state.selection.bookmark(),
+            history_options(old_state),
+            must_preserve_items(old_state),
+            Some(&old_state.schema),
         )
     }
 }
 
-fn record(
-    history: HistoryState,
+fn update_history(
+    history: Arc<HistoryState>,
     tr: &Transaction,
     selection: SelectionBookmark,
     options: HistoryOptions,
     preserve_items: bool,
-) -> Value {
-    serde_json::to_value(history.record(tr, selection, options, preserve_items))
-        .expect("serializable history")
+    schema: Option<&Schema>,
+) -> Arc<HistoryState> {
+    if let Some(meta) = read_meta(tr, schema) {
+        return meta.state;
+    }
+    if !tr.doc_changed() && !closes_history(tr) {
+        return history;
+    }
+    let history = Arc::unwrap_or_clone(history);
+    Arc::new(history.record(tr, selection, options, preserve_items))
 }
 
 fn history_options(state: &EditorState) -> HistoryOptions {
@@ -557,28 +614,44 @@ pub fn history(mut options: HistoryOptions) -> Plugin {
     if options.new_group_delay == 0 {
         options.new_group_delay = HistoryOptions::default().new_group_delay;
     }
-    let mut plugin = Plugin::new(
-        PluginKey { name: HISTORY_KEY.into() },
-        Some(Arc::new(HistoryField { depth: options.depth })),
-    );
+    let mut plugin = Plugin::new(PluginKey { name: HISTORY_KEY.into() }, None)
+        .with_serializable_typed_state_field(
+            CachedHistoryField,
+            serialize_history,
+            |json, state| deserialize_history(json, &state.schema).map(Arc::new),
+        );
     plugin.spec.insert("config".into(), serde_json::to_value(options).expect("history options"));
     plugin
 }
 
-fn read_history(state: &EditorState) -> Option<HistoryState> {
-    let value = state.get_plugin_state(HISTORY_KEY)?;
-    deserialize_history(value, &state.schema)
+fn read_history(state: &EditorState) -> Option<Arc<HistoryState>> {
+    if let Some(json) = state.plugin_states.get(HISTORY_KEY) {
+        return deserialize_history(json, &state.schema).map(Arc::new);
+    }
+    state
+        .get_typed_plugin_state::<Arc<HistoryState>>(HISTORY_KEY)
+        .cloned()
+        .or_else(|| deserialize_history(state.get_plugin_state(HISTORY_KEY)?, &state.schema).map(Arc::new))
+}
+
+fn serialize_history(history: &Arc<HistoryState>) -> Value {
+    serde_json::to_value(history.as_ref()).expect("serializable history")
 }
 
 fn deserialize_history(value: &Value, schema: &Schema) -> Option<HistoryState> {
     let mut history: HistoryState = serde_json::from_value(value.clone()).ok()?;
+    rebind_history(&mut history, schema)?;
+    Some(history)
+}
+
+fn rebind_history(history: &mut HistoryState, schema: &Schema) -> Option<()> {
     for item in history.done.items.iter_mut().chain(&mut history.undone.items) {
         if let Some(step) = &mut item.step {
             let json = serde_json::to_value(&*step).ok()?;
             *step = Step::from_json(schema, &json).ok()?;
         }
     }
-    Some(history)
+    Some(())
 }
 
 pub fn close_history(tr: &mut Transaction) -> &mut Transaction {
@@ -587,7 +660,7 @@ pub fn close_history(tr: &mut Transaction) -> &mut Transaction {
 
 /// Returns whether the transaction was generated by the history plugin.
 pub fn is_history_transaction(tr: &Transaction) -> bool {
-    tr.get_meta(HISTORY_KEY).is_some_and(|meta| !meta.is_null())
+    typed_meta(tr).is_some() || tr.get_meta(HISTORY_KEY).is_some_and(|meta| !meta.is_null())
 }
 
 fn selection_from_changes(state: &EditorState, tr: &Transaction) -> Selection {
@@ -607,26 +680,24 @@ fn selection_from_changes(state: &EditorState, tr: &Transaction) -> Selection {
 }
 
 fn history_transaction(state: &EditorState, redo: bool, scroll: bool) -> Option<Transaction> {
-    let mut history = read_history(state)?;
+    let history = read_history(state)?;
     let preserve_items = must_preserve_items(state);
     let options = history_options(state);
     let (branch, opposite) = if redo {
-        (&mut history.undone, &mut history.done)
+        (&history.undone, &history.done)
     } else {
-        (&mut history.done, &mut history.undone)
+        (&history.done, &history.undone)
     };
     let popped = branch.pop_event(state, preserve_items)?;
-    *branch = popped.remaining;
     let mut tr = popped.transaction;
     let bookmark = selection_from_changes(state, &tr).bookmark();
+    let mut opposite = opposite.clone();
     opposite.add_transform(&tr.transform, Some(bookmark), options, preserve_items);
     let selection = popped.selection.resolve(tr.doc());
-    history.close_event();
+    let (done, undone) = if redo { (opposite, popped.remaining) } else { (popped.remaining, opposite) };
+    let history = Arc::new(HistoryState { done, undone, ..HistoryState::default() });
     tr.set_selection(selection);
-    tr.set_meta(
-        HISTORY_KEY,
-        serde_json::to_value(HistoryMeta { redo, state: history }).expect("serializable history"),
-    );
+    tr.set_serializable_meta(HISTORY_KEY, HistoryMeta { redo, state: history });
     if scroll {
         tr.scroll_into_view();
     }

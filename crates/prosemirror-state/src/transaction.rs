@@ -1,9 +1,10 @@
 use std::any::Any;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use serde::Serialize;
 use serde_json::Value;
 use prosemirror_model::{Fragment, Mark, Node, Slice};
 use prosemirror_transform::{Mapping, MarkFilter, Step, StepResult, Transform};
@@ -16,7 +17,7 @@ pub struct Transaction {
     pub selection: Selection,
     pub stored_marks: Option<Vec<Mark>>,
     pub meta: HashMap<String, Value>,
-    typed_meta: HashMap<String, ErasedValue>,
+    typed_meta: HashMap<String, TypedMeta>,
     pub time: u64,
     initial_selection: Selection,
     selection_origin: Selection,
@@ -25,6 +26,18 @@ pub struct Transaction {
     stored_marks_set: bool,
     scrolled_into_view: bool,
     appended_transaction: Option<Arc<Transaction>>,
+}
+
+#[derive(Clone, Debug)]
+struct TypedMeta {
+    value: ErasedValue,
+    json: Option<Arc<MetadataJson>>,
+}
+
+#[derive(Debug)]
+struct MetadataJson {
+    serialize: fn(&ErasedValue) -> Value,
+    value: OnceLock<Value>,
 }
 
 impl Transaction {
@@ -68,6 +81,20 @@ impl Transaction {
 
     pub fn doc_changed(&self) -> bool {
         self.transform.doc_changed()
+    }
+
+    /// Returns the index and starting position of the sole affected top-level
+    /// child when a replace starts and ends inside that child and keeps the
+    /// number of top-level children intact.
+    pub fn single_block_replacement(&self) -> Option<(usize, usize)> {
+        let [Step::Replace { from, to, .. }] = self.steps() else { return None };
+        let before = self.before();
+        if before.child_count() != self.doc().child_count() {
+            return None;
+        }
+        let (index, start) = before.content().find_index(*from);
+        let child = before.maybe_child(index)?;
+        (start < *from && *to < start + child.node_size()).then_some((index, start))
     }
 
     pub fn selection(&self) -> Selection {
@@ -159,7 +186,12 @@ impl Transaction {
     }
 
     pub fn get_meta(&self, key: impl AsRef<str>) -> Option<&Value> {
-        self.meta.get(key.as_ref())
+        let key = key.as_ref();
+        self.meta.get(key).or_else(|| {
+            let metadata = self.typed_meta.get(key)?;
+            let json = metadata.json.as_ref()?;
+            Some(json.value.get_or_init(|| (json.serialize)(&metadata.value)))
+        })
     }
 
     pub fn set_typed_meta<T: Any + Send + Sync>(
@@ -167,14 +199,37 @@ impl Transaction {
         key: impl Into<String>,
         value: T,
     ) -> &mut Self {
-        let key = key.into();
+        self.store_typed_meta(key.into(), TypedMeta { value: Arc::new(value), json: None })
+    }
+
+    /// Attach typed metadata whose JSON is produced only when `get_meta` reads it.
+    ///
+    /// The supplied value must be serializable as a JSON value.
+    pub fn set_serializable_meta<T: Any + Send + Sync + Serialize>(
+        &mut self,
+        key: impl Into<String>,
+        value: T,
+    ) -> &mut Self {
+        self.store_typed_meta(key.into(), TypedMeta {
+            value: Arc::new(value),
+            json: Some(Arc::new(MetadataJson {
+                serialize: |value| {
+                    serde_json::to_value(value.downcast_ref::<T>().expect("matching metadata type"))
+                        .expect("serializable transaction metadata")
+                },
+                value: OnceLock::new(),
+            })),
+        })
+    }
+
+    fn store_typed_meta(&mut self, key: String, metadata: TypedMeta) -> &mut Self {
         self.meta.remove(&key);
-        self.typed_meta.insert(key, Arc::new(value));
+        self.typed_meta.insert(key, metadata);
         self
     }
 
     pub fn get_typed_meta<T: Any + Send + Sync>(&self, key: impl AsRef<str>) -> Option<&T> {
-        self.typed_meta.get(key.as_ref())?.downcast_ref()
+        self.typed_meta.get(key.as_ref())?.value.downcast_ref()
     }
 
     pub fn is_generic(&self) -> bool {

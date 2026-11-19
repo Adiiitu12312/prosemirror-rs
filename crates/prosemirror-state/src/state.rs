@@ -6,7 +6,7 @@ use prosemirror_model::{Mark, ModelError, Node, Schema};
 use serde::{Serialize, Serializer};
 use serde_json::Value;
 
-use crate::plugin::{ErasedValue, Plugin};
+use crate::plugin::{Plugin, StoredTypedState};
 use crate::selection::Selection;
 use crate::transaction::Transaction;
 
@@ -17,8 +17,9 @@ pub struct EditorState {
     pub stored_marks: Option<Vec<Mark>>,
     pub schema: Schema,
     pub plugins: Vec<Plugin>,
+    /// JSON-only plugin fields and explicit overrides of serializable typed fields.
     pub plugin_states: HashMap<String, Value>,
-    typed_plugin_states: HashMap<String, ErasedValue>,
+    typed_plugin_states: HashMap<String, Arc<StoredTypedState>>,
     pub scroll_to_selection: usize,
 }
 
@@ -75,23 +76,29 @@ impl EditorState {
             scroll_to_selection: 0,
         };
         for plugin in &state.plugins {
+            let name = &plugin.key.name;
+            let serialized = plugin_json.and_then(|(json, fields)| {
+                fields
+                    .iter()
+                    .find(|(_, candidate)| candidate.key == plugin.key)
+                    .and_then(|(property, _)| json.get(*property))
+            });
             if let Some(field) = &plugin.field {
-                let serialized = plugin_json.and_then(|(json, fields)| {
-                    fields
-                        .iter()
-                        .find(|(_, candidate)| candidate.key == plugin.key)
-                        .and_then(|(property, _)| json.get(*property))
-                });
                 let value = if let Some(value) = serialized {
                     field.deserialize_with_state(&config, value, &state)
                 } else {
                     field.init_with_state(&config, &state)
                 };
-                state.plugin_states.insert(plugin.key.name.clone(), value);
+                state.plugin_states.insert(name.clone(), value);
             }
             if let Some(field) = &plugin.typed_field {
-                let value = field.init(&config, &state);
-                state.typed_plugin_states.insert(plugin.key.name.clone(), value);
+                let value = serialized.and_then(|json| field.deserialize(json, &state));
+                if let Some(json) = serialized.filter(|_| value.is_none() && field.has_json()) {
+                    state.plugin_states.insert(name.clone(), json.clone());
+                }
+                let source_json = serialized.filter(|_| value.is_some());
+                let value = value.unwrap_or_else(|| field.init(&config, &state));
+                state.typed_plugin_states.insert(name.clone(), StoredTypedState::new(value, field, source_json));
             }
         }
         Ok(state)
@@ -194,10 +201,24 @@ impl EditorState {
                 state.plugin_states.insert(plugin.key.name.clone(), next);
             }
             if let Some(field) = &plugin.typed_field {
-                let prev = self.typed_plugin_states.get(&plugin.key.name)
+                let name = &plugin.key.name;
+                let cached = self.typed_plugin_states.get(name)
                     .expect("initialized plugin state");
+                let override_value = self.plugin_states.get(name)
+                    .filter(|_| field.has_json())
+                    .map(|json| field.deserialize(json, self).unwrap_or_else(|| {
+                        let config = EditorStateConfig {
+                            schema: self.schema.clone(),
+                            doc: Some(self.doc.clone()),
+                            selection: Some(self.selection.clone()),
+                            stored_marks: self.stored_marks.clone(),
+                            plugins: self.plugins.clone(),
+                        };
+                        field.init(&config, self)
+                    }));
+                let prev = override_value.as_ref().unwrap_or(&cached.value);
                 let next = field.apply(tr, prev, self, &state);
-                state.typed_plugin_states.insert(plugin.key.name.clone(), next);
+                state.typed_plugin_states.insert(name.clone(), StoredTypedState::new(next, field, None));
             }
         }
         state
@@ -227,18 +248,24 @@ impl EditorState {
                 state.plugin_states.insert(plugin.key.name.clone(), value);
             }
             if let Some(field) = &plugin.typed_field {
-                let value = self.typed_plugin_states.get(&plugin.key.name)
-                    .filter(|value| field.accepts(value))
-                    .cloned()
-                    .unwrap_or_else(|| field.init(&config, &state));
-                state.typed_plugin_states.insert(plugin.key.name.clone(), value);
+                let name = &plugin.key.name;
+                let value = self.typed_plugin_states.get(name)
+                    .filter(|cached| field.accepts(&cached.value))
+                    .map_or_else(
+                        || StoredTypedState::new(field.init(&config, &state), field, None),
+                        |cached| cached.for_field(field),
+                    );
+                state.typed_plugin_states.insert(name.clone(), value);
+                if let Some(json) = self.plugin_states.get(name).filter(|_| field.has_json()) {
+                    state.plugin_states.insert(name.clone(), json.clone());
+                }
             }
         }
         Ok(state)
     }
 
     pub fn get_plugin_state(&self, name: &str) -> Option<&Value> {
-        self.plugin_states.get(name).or_else(|| {
+        self.get_exact_plugin_state(name).or_else(|| {
             self.plugins.iter().find_map(|plugin| {
                 let (label, suffix) = plugin.key.name.rsplit_once('$')?;
                 if label == name && suffix.bytes().all(|byte| byte.is_ascii_digit()) {
@@ -250,11 +277,15 @@ impl EditorState {
         })
     }
 
+    pub(crate) fn get_exact_plugin_state(&self, key: &str) -> Option<&Value> {
+        self.plugin_states.get(key).or_else(|| self.typed_plugin_states.get(key)?.json())
+    }
+
     pub fn get_typed_plugin_state<T: Any + Send + Sync>(
         &self,
         key: impl AsRef<str>,
     ) -> Option<&T> {
-        self.typed_plugin_states.get(key.as_ref())?.downcast_ref()
+        self.typed_plugin_states.get(key.as_ref())?.value.downcast_ref()
     }
 
     pub fn to_json(&self) -> Value {
@@ -274,8 +305,12 @@ impl EditorState {
             if matches!(name, "doc" | "selection") {
                 return Err(ModelError::Serialization(format!("Reserved editor state field {name:?}")));
             }
-            if let (Some(field), Some(value)) = (&plugin.field, plugin.get_state(self)) {
-                json[name] = field.to_json(value);
+            if let Some(value) = plugin.get_state(self) {
+                if let Some(field) = &plugin.field {
+                    json[name] = field.to_json(value);
+                } else if plugin.typed_field.as_ref().is_some_and(|field| field.has_json()) {
+                    json[name] = value.clone();
+                }
             }
         }
         Ok(json)
