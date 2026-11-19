@@ -1,0 +1,16 @@
+{
+  "width": 420,
+  "height": 200,
+  "doc": {"type":"doc","content":[{"type":"paragraph"}]},
+  "events": [
+    {"type":"focus"},
+    {"type":"text","text":"ab"},
+    {"type":"key","key":"b","control":true},
+    {"type":"text","text":"!"},
+    {"type":"key","key":"b","control":true},
+    {"type":"composition_start"},
+    {"type":"composition_update","text":"e","from":1,"to":1},
+    {"type":"composition_commit","text":"é"},
+    {"type":"paste_text","text":"?"}
+  ]
+}

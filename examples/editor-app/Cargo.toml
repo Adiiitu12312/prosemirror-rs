@@ -1,0 +1,29 @@
+[package]
+name = "editor-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+arboard = { version = "3", default-features = false }
+cosmic-text = "0.19"
+fontdb = "0.23"
+png = "0.18"
+softbuffer = "0.4"
+winit = "0.30"
+prosemirror-commands.workspace = true
+prosemirror-editor.workspace = true
+prosemirror-history.workspace = true
+prosemirror-inputrules.workspace = true
+prosemirror-keymap.workspace = true
+prosemirror-model.workspace = true
+prosemirror-state.workspace = true
+prosemirror-view.workspace = true
+prosemirror-example-setup = { path = "../../crates/prosemirror-example-setup" }
+prosemirror-tables = { path = "../../crates/prosemirror-tables" }
+prosemirror-schema-basic.workspace = true
+prosemirror-schema-list.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+unicode-segmentation.workspace = true

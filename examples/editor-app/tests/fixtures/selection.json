@@ -1,0 +1,18 @@
+{
+  "width": 420,
+  "height": 220,
+  "doc": {"type":"doc","content":[
+    {"type":"paragraph","content":[{"type":"text","text":"alpha beta"}]},
+    {"type":"paragraph","content":[{"type":"text","text":"gamma"}]}
+  ]},
+  "events": [
+    {"type":"focus"},
+    {"type":"pointer_down","at":{"pos":2}},
+    {"type":"pointer_move","at":{"pos":6}},
+    {"type":"pointer_up","at":{"pos":6}},
+    {"type":"touch_long_press","at":{"pos":8}},
+    {"type":"touch_drag_start","at":{"pos":11}},
+    {"type":"touch_drag","at":{"pos":16}},
+    {"type":"touch_drag_end","at":{"pos":16}}
+  ]
+}

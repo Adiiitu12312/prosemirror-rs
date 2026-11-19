@@ -24,6 +24,7 @@ members = [
     "crates/prosemirror-editor",
     "crates/prosemirror-fuzz",
     "crates/prosemirror-integration-tests",
+    "examples/editor-app",
 ]
 
 [workspace.package]

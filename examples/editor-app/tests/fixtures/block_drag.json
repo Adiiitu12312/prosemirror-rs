@@ -1,0 +1,14 @@
+{
+  "width": 420,
+  "height": 220,
+  "doc": {"type":"doc","content":[
+    {"type":"paragraph","content":[{"type":"text","text":"first"}]},
+    {"type":"paragraph","content":[{"type":"text","text":"second"}]}
+  ]},
+  "events": [
+    {"type":"focus"},
+    {"type":"drag_block","pos":0},
+    {"type":"drag_over","at":{"pos":14}},
+    {"type":"drop","at":{"pos":14}}
+  ]
+}

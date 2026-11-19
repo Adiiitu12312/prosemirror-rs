@@ -32,6 +32,7 @@ A Rust port of [ProseMirror](https://prosemirror.net/) for native editors. The w
 | `prosemirror-editor` | View 1.42.9 | Native event controller and versioned renderer interface |
 | `prosemirror-fuzz` | — | Rust and JavaScript differential test harness |
 | `prosemirror-integration-tests` | — | Workspace integration tests |
+| `editor-app` | — | Native reference application at `examples/editor-app` |
 
 The schema uses the ordering semantics of `orderedmap` 2.1.1. The JavaScript history reference uses `rope-sequence` 1.3.4. The Rust key name tables match `w3c-keyname` 2.2.8.
 
@@ -52,6 +53,19 @@ Host interface version 1 is exposed as `HOST_INTERFACE_VERSION`. Positions use U
 - `NodeView` supports native controllers with update, selection, event filtering, mutation filtering, and destruction callbacks. Direct view props take precedence over view plugin props and attached state plugin props.
 
 The clipboard codec writes plain text and an opaque native slice envelope with its open depths intact. Browser-specific parsing and selection behavior remain in the opt-in browser adapter.
+
+## Native reference application
+
+The sample opens a native document with headings, nested lists and task items, quotations, code, and a table. Use the left gutter to drag blocks. Select and move text with the mouse or long-press and drag touch handles. The sample uses the system's standard modifier for bold, italic, code, strike, link, copy, paste, and undo or redo, and supports Markdown-style prefixes such as `# `, `> `, `- `, `1. `, and `[ ] `.
+
+- **Winit** creates the window and reports input, focus, and IME events. The application positions the system IME candidate window using the measured preedit caret.
+- **Cosmic Text** shapes and measures marked runs using native font fallback. Its Swash integration rasterizes glyphs for the CPU display list. **fontdb** supplies the isolated, bundled Inter font database used in scripted tests.
+- **Softbuffer** presents the same CPU buffer used by headless replay. The **png** crate saves that buffer as an offscreen snapshot without starting a window.
+- **Arboard** reads and writes system text clipboard data. The application retains the opaque rich slice inside the process while it owns the matching text, so rich copy and paste between independent processes uses the plain-text representation.
+
+The scripted binary accepts a JSON document, selection, and native event sequence through `--replay INPUT`. It prints the resulting state JSON and can produce an offscreen PNG with `--png OUTPUT`. Use `--snapshot PNG` to render the sample. CI runs the replay tests and publishes the screenshots for all three desktop platforms.
+
+The release-mode benchmark is invoked separately as `--bench core` and `--bench surface` so each host starts in a fresh process. It reports total time, mean time per input, and on Linux the process's current and peak resident memory as JSON lines. The core run includes state, history, and display-list construction. The surface run additionally includes layout and rasterization at 900 × 760. CI publishes measurements from the Linux runner.
 
 ## Verification
 
