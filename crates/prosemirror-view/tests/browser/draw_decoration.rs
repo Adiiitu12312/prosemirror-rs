@@ -1,0 +1,348 @@
+//! Port of prosemirror-view 1.42.9 test/webtest-draw-decoration.ts.
+
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
+
+use prosemirror_model::{DomOutputSpec, Fragment, NodeSpec, Schema};
+use prosemirror_state::{Selection, Transaction};
+use prosemirror_test_builder::{blockquote, doc, em, h1, hr, p, strong, test_schema, TaggedDoc};
+use prosemirror_view::browser::{BrowserViewProps, GetPos, NodeView, WidgetView, WidgetViewFactory};
+use prosemirror_view::{Decoration, DecorationAttrs, DecorationGroup, DecorationSet};
+use serde_json::{json, Value};
+use wasm_bindgen::JsCast;
+use wasm_bindgen_test::wasm_bindgen_test;
+use web_sys::{Element, HtmlElement};
+
+use crate::support::{mount, TestView};
+
+fn attrs(pairs: &[(&str, &str)]) -> DecorationAttrs {
+    pairs.iter().map(|(name, val)| ((*name).into(), (*val).into())).collect()
+}
+
+fn inline(from: usize, to: usize, class: &str) -> Decoration {
+    Decoration::inline(from, to, attrs(&[("class", class)]), Value::Null)
+}
+
+fn widget(pos: usize, id: u64) -> Decoration {
+    Decoration::widget(pos, id, Value::Null)
+}
+
+fn widget_element(tag: &'static str, text: Option<&'static str>) -> WidgetViewFactory {
+    Rc::new(move |doc, _, _, _| {
+        let el = doc.create_element(tag)?;
+        el.set_text_content(text);
+        Ok(WidgetView::new(el.into()))
+    })
+}
+
+fn widget_text(text: &'static str) -> WidgetViewFactory {
+    Rc::new(move |doc, _, _, _| Ok(WidgetView::new(doc.create_text_node(text).into())))
+}
+
+fn setup(fixture: TaggedDoc, decorations: Vec<Decoration>) -> (TestView, Rc<RefCell<DecorationSet>>) {
+    setup_with(fixture, decorations, BrowserViewProps::default())
+}
+
+fn setup_with(fixture: TaggedDoc, decorations: Vec<Decoration>, mut props: BrowserViewProps)
+    -> (TestView, Rc<RefCell<DecorationSet>>)
+{
+    let set = Rc::new(RefCell::new(DecorationSet::create(&fixture.node, decorations)));
+    let source = set.clone();
+    props.decorations.insert(0, Rc::new(move |_| Some(source.borrow().clone())));
+    for id in 1..=3 {
+        props.widgets.entry(id).or_insert_with(|| widget_element("button", Some("ω")));
+    }
+    (mount(fixture, props), set)
+}
+
+fn update(view: &TestView, set: &RefCell<DecorationSet>, add: Vec<Decoration>, remove: &[Decoration]) {
+    edit(view, set, add, remove, |_| {});
+}
+
+fn edit(
+    view: &TestView,
+    set: &RefCell<DecorationSet>,
+    add: Vec<Decoration>,
+    remove: &[Decoration],
+    edit: impl FnOnce(&mut Transaction),
+) {
+    let mut tr = view.state().tr();
+    edit(&mut tr);
+    let next = set.borrow().map(tr.mapping(), tr.doc()).remove(remove).add(tr.doc(), add);
+    set.replace(next);
+    view.dispatch(tr).unwrap();
+}
+
+fn one(view: &TestView, selector: &str) -> Element {
+    view.dom().query_selector(selector).unwrap().unwrap()
+}
+
+fn all(view: &TestView, selector: &str) -> Vec<Element> {
+    let nodes = view.dom().query_selector_all(selector).unwrap();
+    (0..nodes.length()).map(|index| nodes.item(index).unwrap().unchecked_into()).collect()
+}
+
+fn contents(nodes: &[Element]) -> Vec<String> {
+    nodes.iter().map(|node| node.text_content().unwrap()).collect()
+}
+
+fn style(node: &Element, property: &str) -> String {
+    node.unchecked_ref::<HtmlElement>().style().get_property_value(property).unwrap()
+}
+
+#[wasm_bindgen_test]
+fn draws_inline_decorations() {
+    let (view, _) = setup(doc!(p!("foobar")), vec![inline(2, 5, "foo")]);
+    assert_eq!(one(&view, ".foo").text_content().unwrap(), "oob");
+}
+
+#[wasm_bindgen_test]
+fn draws_wrapping_decorations() {
+    let (view, _) = setup(doc!(p!("foo")), vec![
+        Decoration::inline(1, 5, attrs(&[("nodeName", "i")]), Value::Null),
+    ]);
+    assert_eq!(one(&view, "i").inner_html(), "foo");
+}
+
+#[wasm_bindgen_test]
+fn draws_node_decorations() {
+    let (view, _) = setup(doc!(p!("foo"), p!("bar")), vec![
+        Decoration::node(5, 10, attrs(&[("class", "cls")]), Value::Null),
+    ]);
+    let found = all(&view, ".cls");
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].node_name(), "P");
+    assert_eq!(found[0].previous_sibling().unwrap().node_name(), "P");
+}
+
+#[wasm_bindgen_test]
+fn updates_multilevel_wrapping_decorations() {
+    let wrap = |class| Decoration::inline(1, 5, attrs(&[("nodeName", "i"), ("class", class)]), Value::Null);
+    let second = wrap("b");
+    let (view, set) = setup(doc!(p!("hello")), vec![wrap("a"), second.clone()]);
+    assert_eq!(all(&view, "i").len(), 2);
+    update(&view, &set, vec![wrap("c")], &[second]);
+    let mut classes: Vec<_> = all(&view, "i").into_iter().map(|node| node.class_name()).collect();
+    classes.sort();
+    assert_eq!(classes, ["a", "c"]);
+}
+
+#[wasm_bindgen_test]
+fn draws_overlapping_inline_decorations() {
+    let (view, _) = setup(doc!(p!("abcdef")), vec![inline(3, 5, "foo"), inline(4, 6, "bar"), inline(1, 7, "baz")]);
+    let baz = all(&view, ".baz");
+    assert_eq!(contents(&baz), ["ab", "c", "d", "e", "f"]);
+    let classes = |node: &Element| {
+        let class = node.class_name();
+        let mut names: Vec<_> = class.split_whitespace().collect();
+        names.sort_unstable();
+        names.join(" ")
+    };
+    assert_eq!(classes(&baz[1]), "baz foo");
+    assert_eq!(classes(&baz[2]), "bar baz foo");
+    assert_eq!(classes(&baz[3]), "bar baz");
+}
+
+#[wasm_bindgen_test]
+fn draws_multiple_widgets() {
+    let (view, _) = setup(doc!(p!("foobar")), vec![widget(1, 1), widget(4, 2), widget(7, 3)]);
+    let found = all(&view, "button");
+    assert_eq!(found.len(), 3);
+    assert_eq!(found[0].next_sibling().unwrap().text_content().unwrap(), "foo");
+    assert_eq!(found[1].next_sibling().unwrap().text_content().unwrap(), "bar");
+    assert_eq!(found[2].previous_sibling().unwrap().text_content().unwrap(), "bar");
+}
+
+#[wasm_bindgen_test]
+fn orders_widgets_by_side() {
+    let (view, _) = setup_with(doc!(p!("foobar")), vec![
+        widget(4, 1),
+        Decoration::widget(4, 2, json!({"side":-100})),
+        Decoration::widget(4, 3, json!({"side":2})),
+    ], BrowserViewProps { widgets: [(1, widget_text("B")), (2, widget_text("A")), (3, widget_text("C"))].into(),
+        ..BrowserViewProps::default() });
+    assert_eq!(view.dom().text_content().unwrap(), "fooABCbar");
+}
+
+#[wasm_bindgen_test]
+fn draws_a_widget_in_an_empty_node() {
+    let (view, _) = setup(doc!(p!()), vec![widget(1, 1)]);
+    assert_eq!(all(&view, "button").len(), 1);
+}
+
+#[wasm_bindgen_test]
+fn draws_widgets_on_node_boundaries() {
+    let (view, _) = setup(doc!(p!("foo", em("bar"))), vec![widget(4, 1)]);
+    assert_eq!(all(&view, "button").len(), 1);
+}
+
+#[wasm_bindgen_test]
+fn draws_decorations_from_multiple_plugins() {
+    let props = BrowserViewProps {
+        decorations: vec![Rc::new(|state| Some(DecorationSet::create(&state.doc, vec![widget(6, 2)])))],
+        ..BrowserViewProps::default()
+    };
+    let (view, _) = setup_with(doc!(p!("foo", em("bar"))), vec![widget(2, 1)], props);
+    assert_eq!(all(&view, "button").len(), 2);
+}
+
+#[wasm_bindgen_test]
+fn calls_widget_destroy_methods() {
+    let destroyed = Rc::new(Cell::new(false));
+    let effect = destroyed.clone();
+    let factory: WidgetViewFactory = Rc::new(move |doc, _, _, _| {
+        let effect = effect.clone();
+        let mut widget = WidgetView::new(doc.create_element("button")?.into());
+        widget.destroy = Some(Rc::new(move |dom| {
+            assert_eq!(dom.node_name(), "BUTTON");
+            effect.set(true);
+        }));
+        Ok(widget)
+    });
+    let (view, set) = setup_with(doc!(p!("abc")), vec![widget(2, 1)], BrowserViewProps {
+        widgets: [(1, factory)].into(), ..BrowserViewProps::default()
+    });
+    edit(&view, &set, vec![], &[], |tr| { tr.delete(1, 4); });
+    assert!(destroyed.get());
+}
+
+#[wasm_bindgen_test]
+fn draws_inline_decorations_spanning_multiple_parents() {
+    let (view, _) = setup(doc!(p!("long first ", em("p"), "aragraph"), p!("two")), vec![inline(7, 25, "foo")]);
+    assert_eq!(contents(&all(&view, ".foo")), ["irst ", "p", "aragraph", "tw"]);
+}
+
+#[wasm_bindgen_test]
+fn draws_inline_decorations_across_empty_paragraphs() {
+    let (view, _) = setup(doc!(p!("first"), p!(), p!("second")), vec![inline(3, 12, "foo")]);
+    assert_eq!(contents(&all(&view, ".foo")), ["rst", "se"]);
+}
+
+#[wasm_bindgen_test]
+fn handles_inline_decorations_ending_at_node_boundaries() {
+    let (view, _) = setup(doc!(p!(), p!()), vec![inline(1, 3, "foo")]);
+    assert!(all(&view, ".foo").is_empty());
+}
+
+#[wasm_bindgen_test]
+fn draws_decorations_with_multiple_classes() {
+    let (view, _) = setup(doc!(p!("foo")), vec![inline(1, 4, "foo bar")]);
+    assert_eq!(all(&view, ".foo").len(), 1);
+    assert_eq!(all(&view, ".bar").len(), 1);
+}
+
+#[wasm_bindgen_test]
+fn supports_overlapping_inline_decorations() {
+    let (view, _) = setup(doc!(p!("foobar")), vec![inline(1, 3, "foo"), inline(2, 5, "bar")]);
+    assert_eq!(contents(&all(&view, ".foo")), ["f", "o"]);
+    assert_eq!(contents(&all(&view, ".bar")), ["o", "ob"]);
+}
+
+#[wasm_bindgen_test]
+fn preserves_nodes_when_irrelevant_decorations_change() {
+    let (view, set) = setup(doc!(p!("foo"), p!("baz")), vec![inline(7, 8, "foo")]);
+    let paragraph = view.dom().last_child().unwrap();
+    update(&view, &set, vec![inline(2, 3, "bar")], &[]);
+    assert!(paragraph.is_same_node(view.dom().last_child().as_ref()));
+    assert_eq!(all(&view, ".bar").len(), 1);
+}
+
+#[wasm_bindgen_test]
+fn preserves_nodes_when_irrelevant_content_changes() {
+    let (view, set) = setup(doc!(p!("foo"), p!("baz")), vec![inline(7, 8, "foo")]);
+    let paragraph = view.dom().last_child().unwrap();
+    for _ in 0..2 {
+        edit(&view, &set, vec![], &[], |tr| { tr.delete(2, 3); });
+    }
+    assert!(paragraph.is_same_node(view.dom().last_child().as_ref()));
+}
+
+#[wasm_bindgen_test]
+fn adds_a_widget_on_a_node_boundary() {
+    let (view, set) = setup(doc!(p!("foo", em("bar"))), vec![]);
+    update(&view, &set, vec![widget(4, 1)], &[]);
+    assert_eq!(all(&view, "button").len(), 1);
+}
+
+#[wasm_bindgen_test]
+fn removes_a_widget_on_a_node_boundary() {
+    let dec = widget(4, 1);
+    let (view, set) = setup(doc!(p!("foo", em("bar"))), vec![dec.clone()]);
+    update(&view, &set, vec![], &[dec]);
+    assert!(all(&view, "button").is_empty());
+}
+
+#[wasm_bindgen_test]
+fn removes_the_class_from_a_text_node() {
+    let dec = inline(1, 4, "foo");
+    let (view, set) = setup(doc!(p!("abc")), vec![dec.clone()]);
+    assert_eq!(all(&view, ".foo").len(), 1);
+    update(&view, &set, vec![], &[dec]);
+    assert!(all(&view, ".foo").is_empty());
+}
+
+#[wasm_bindgen_test]
+fn removes_the_class_from_part_of_a_text_node() {
+    let dec = inline(2, 4, "foo");
+    let (view, set) = setup(doc!(p!("abcd")), vec![dec.clone()]);
+    assert_eq!(all(&view, ".foo").len(), 1);
+    update(&view, &set, vec![], &[dec]);
+    assert!(all(&view, ".foo").is_empty());
+    assert_eq!(one(&view, "p").inner_html(), "abcd");
+}
+
+#[wasm_bindgen_test]
+fn changes_the_class_for_part_of_a_text_node() {
+    let dec = inline(2, 4, "foo");
+    let (view, set) = setup(doc!(p!("abcd")), vec![dec.clone()]);
+    assert_eq!(all(&view, ".foo").len(), 1);
+    update(&view, &set, vec![inline(2, 4, "bar")], &[dec]);
+    assert!(all(&view, ".foo").is_empty());
+    assert_eq!(all(&view, ".bar").len(), 1);
+}
+
+#[wasm_bindgen_test]
+fn draws_a_widget_added_in_the_middle_of_a_text_node() {
+    let (view, set) = setup(doc!(p!("foo")), vec![]);
+    update(&view, &set, vec![widget(3, 1)], &[]);
+    assert_eq!(one(&view, "p").text_content().unwrap(), "foωo");
+}
+
+#[wasm_bindgen_test]
+fn updates_a_text_node_around_a_widget() {
+    let (view, set) = setup(doc!(p!("bar")), vec![widget(3, 1)]);
+    edit(&view, &set, vec![], &[], |tr| { tr.delete(1, 2); });
+    assert_eq!(all(&view, "button").len(), 1);
+    assert_eq!(one(&view, "p").text_content().unwrap(), "aωr");
+}
+
+#[wasm_bindgen_test]
+fn updates_a_text_node_with_an_inline_decoration() {
+    let (view, set) = setup(doc!(p!("bar")), vec![inline(1, 3, "foo")]);
+    edit(&view, &set, vec![], &[], |tr| { tr.delete(1, 2); });
+    let foo = one(&view, ".foo");
+    assert_eq!(foo.text_content().unwrap(), "a");
+    assert_eq!(foo.next_sibling().unwrap().text_content().unwrap(), "r");
+}
+
+#[wasm_bindgen_test]
+fn redraws_a_partially_decorated_node_when_a_widget_is_added() {
+    let (view, set) = setup(doc!(p!("one", em("two"))), vec![inline(1, 6, "foo")]);
+    update(&view, &set, vec![widget(6, 1)], &[]);
+    assert_eq!(contents(&all(&view, ".foo")), ["one", "tw"]);
+}
+
+#[wasm_bindgen_test]
+fn redraws_when_skipping_a_split_text_node() {
+    let (view, set) = setup(doc!(p!("foo")), vec![widget(3, 1), inline(3, 4, "foo")]);
+    update(&view, &set, vec![widget(4, 2)], &[]);
+    assert_eq!(all(&view, "button").len(), 2);
+}
+
+#[wasm_bindgen_test]
+fn drops_removed_node_decorations() {
+    let dec = Decoration::node(1, 6, attrs(&[("class", "cls")]), Value::Null);
+    let (view, set) = setup(doc!(blockquote(p!("foo"), p!("bar"))), vec![dec.clone()]);
+    update(&view, &set, vec![], &[dec]);
+    assert!(all(&view, ".cls").is_empty());
+}

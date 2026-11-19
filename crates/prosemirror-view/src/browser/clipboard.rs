@@ -1,11 +1,11 @@
 //! Browser HTML and ClipboardEvent adapters for the Rust clipboard algorithms.
 
-use prosemirror_model::{DomAttribute, DomElement, DomNode, ResolvedPos, Slice};
+use prosemirror_model::{DomNode, ResolvedPos, Slice};
 use serde_json::json;
 use wasm_bindgen::{JsCast, JsValue};
-use web_sys::{ClipboardEvent, DataTransfer, Document, Element, HtmlElement, HtmlTemplateElement, Node};
+use web_sys::{ClipboardEvent, DataTransfer, Document, HtmlElement, HtmlTemplateElement};
 
-use super::{error, viewdesc::render_dom, BrowserView};
+use super::{domchange::browser_dom, error, viewdesc::render_dom, BrowserView};
 use crate::{parse_from_clipboard, serialize_for_clipboard, ClipboardOptions};
 
 pub struct BrowserClipboardData {
@@ -110,30 +110,5 @@ pub(super) fn clipboard_text(data: &DataTransfer) -> Result<String, JsValue> {
 fn parse_html(document: &Document, html: &str) -> Result<DomNode, JsValue> {
     let template = document.create_element("template")?.dyn_into::<HtmlTemplateElement>()?;
     template.set_inner_html(html);
-    Ok(DomNode::Fragment(portable_children(&template.content())))
-}
-
-fn portable_children(node: &Node) -> Vec<DomNode> {
-    let children = node.child_nodes();
-    (0..children.length()).filter_map(|i| children.item(i)).filter_map(|node| portable_node(&node)).collect()
-}
-
-fn portable_node(node: &Node) -> Option<DomNode> {
-    match node.node_type() {
-        Node::TEXT_NODE => Some(DomNode::Text(node.node_value().unwrap_or_default())),
-        Node::COMMENT_NODE => Some(DomNode::Comment(node.node_value().unwrap_or_default())),
-        Node::ELEMENT_NODE => {
-            let element = node.dyn_ref::<Element>()?;
-            let attrs = element.attributes();
-            Some(DomNode::Element(DomElement {
-                name: element.local_name(),
-                namespace: element.namespace_uri().filter(|namespace| namespace != "http://www.w3.org/1999/xhtml"),
-                attributes: (0..attrs.length()).filter_map(|i| attrs.item(i)).map(|attr| DomAttribute {
-                    name: attr.name(), value: attr.value(), namespace: attr.namespace_uri(),
-                }).collect(),
-                children: portable_children(node),
-            }))
-        }
-        _ => None,
-    }
+    Ok(browser_dom(&template.content()))
 }

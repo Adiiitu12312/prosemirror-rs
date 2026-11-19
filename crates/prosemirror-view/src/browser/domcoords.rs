@@ -323,25 +323,22 @@ fn text_range(node: &Node, from: u32, to: u32) -> Option<Range> {
     Some(range)
 }
 
-fn rects(target: &JsValue) -> impl Iterator<Item = ViewportRect> {
-    let list: Option<DomRectList> = method(target, "getClientRects")
-        .and_then(|getter| getter.call0(target).ok())
-        .and_then(|list| list.dyn_into().ok());
+fn rects(list: Option<DomRectList>) -> impl Iterator<Item = ViewportRect> {
     (0..list.as_ref().map_or(0, DomRectList::length))
         .filter_map(move |index| list.as_ref()?.item(index).map(ViewportRect::from))
 }
 
 fn node_rects(node: &Node) -> impl Iterator<Item = ViewportRect> {
-    let target = match node.node_type() {
-        Node::TEXT_NODE => text_range(node, 0, node_size(node)).map(JsValue::from),
-        Node::ELEMENT_NODE => Some(JsValue::from(node.clone())),
-        _ => None,
+    let list = if node.node_type() == Node::TEXT_NODE {
+        text_range(node, 0, node_size(node)).and_then(|range| range.get_client_rects())
+    } else {
+        node.dyn_ref::<Element>().map(Element::get_client_rects)
     };
-    target.into_iter().flat_map(|target| rects(&target))
+    rects(list)
 }
 
-fn single_rect(target: &JsValue, bias: i32, fallback: impl FnOnce() -> DomRect) -> ViewportRect {
-    let mut boxes = rects(target).peekable();
+fn single_rect(list: Option<DomRectList>, bias: i32, fallback: impl FnOnce() -> DomRect) -> ViewportRect {
+    let mut boxes = rects(list).peekable();
     if bias < 0 {
         return boxes.find(|rect| rect.nonzero()).unwrap_or_else(|| fallback().into());
     }
@@ -358,11 +355,11 @@ fn single_rect(target: &JsValue, bias: i32, fallback: impl FnOnce() -> DomRect) 
 }
 
 fn range_rect(range: &Range, bias: i32) -> ViewportRect {
-    single_rect(range.as_ref(), bias, || range.get_bounding_client_rect())
+    single_rect(range.get_client_rects(), bias, || range.get_bounding_client_rect())
 }
 
 fn element_rect(element: &Element, bias: i32) -> ViewportRect {
-    single_rect(element.as_ref(), bias, || element.get_bounding_client_rect())
+    single_rect(Some(element.get_client_rects()), bias, || element.get_bounding_client_rect())
 }
 
 fn find_offset_in_text(node: Node, point: ViewportPoint) -> (Node, u32) {
@@ -492,7 +489,7 @@ fn find_element_at_point(element: Element, point: ViewportPoint, bounds: Viewpor
         for offset in 0..len {
             let index = (start + offset) % len;
             let Some(child) = children.item(index).and_then(|node| node.dyn_into::<Element>().ok()) else { continue };
-            if let Some(rect) = rects(child.as_ref()).find(|rect| rect.contains(point)) {
+            if let Some(rect) = rects(Some(child.get_client_rects())).find(|rect| rect.contains(point)) {
                 return find_element_at_point(child, point, rect);
             }
         }

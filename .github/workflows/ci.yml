@@ -86,6 +86,9 @@ jobs:
         run: cargo clippy -p prosemirror-view --target wasm32-unknown-unknown --test browser -- -D warnings
 
       - name: Run the Rust browser tests
+        if: ${{ !cancelled() }}
         run: |
-          export CHROMEDRIVER="$CHROMEWEBDRIVER/chromedriver"
+          if [[ -n "$CHROMEWEBDRIVER" ]]; then
+            export CHROMEDRIVER="$CHROMEWEBDRIVER/chromedriver"
+          fi
           wasm-pack test --headless --chrome crates/prosemirror-view --test browser

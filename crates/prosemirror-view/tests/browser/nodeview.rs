@@ -122,7 +122,8 @@ fn has_its_ignore_mutation_method_called() {
         let dom = doc.create_element("div")?;
         let content = doc.create_element("p")?;
         dom.append_child(&content)?;
-        dom.append_child(&doc.create_element("x-info")?)?;
+        let info = doc.create_element("x-info")?;
+        dom.append_child(&info)?;
         let mut result = NodeView::new(dom).with_content_dom(content);
         let target = observed.clone();
         result.ignore_mutation = Some(Rc::new(move |mutation| {
