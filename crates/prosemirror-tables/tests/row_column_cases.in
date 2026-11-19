@@ -45,7 +45,7 @@
 #[test] fn delete_row_can_delete_the_last_row() { verify_case(44); }
 #[test] fn delete_row_can_shrink_rowspan_cells() { verify_case(45); }
 #[test] fn delete_row_can_move_cells_that_start_in_the_deleted_row() { verify_case(46); }
-#[test] fn delete_row_can_move_cells_that_start_in_the_deleted_row() { verify_case(47); }
+#[test] fn delete_row_can_move_cells_that_start_in_the_deleted_row_second_case() { verify_case(47); }
 #[test] fn delete_row_moves_the_same_cell_with_colspan_greater_than_1_that_start_in_the_deleted_row_only_once() { verify_case(48); }
 #[test] fn delete_row_deletes_multiple_rows_when_the_start_cell_has_a_rowspan() { verify_case(49); }
 #[test] fn delete_row_moves_the_same_cell_with_colspan_greater_than_1_that_start_in_the_deleted_row_only_once_when_deleting_multiple_rows() { verify_case(50); }

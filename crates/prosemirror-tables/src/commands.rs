@@ -259,7 +259,7 @@ fn at_cell<'a>(table: &'a Node, map: &TableMap, row: usize, col: usize) -> Optio
     table.node_at(*map.map.get(row * map.width + col)?)
 }
 
-fn role(node: &Node) -> Option<&str> {
+pub(crate) fn role(node: &Node) -> Option<&str> {
     node.node_type()?.spec.table_role.as_deref()
 }
 
@@ -271,31 +271,41 @@ fn row_offset(table: &Node, row: usize) -> usize {
     table.content().children[..row].iter().map(Node::node_size).sum()
 }
 
-fn get_span(node: &Node, name: &str) -> usize {
+pub(crate) fn get_span(node: &Node, name: &str) -> usize {
     node.attrs().and_then(|attrs| attrs[name].as_u64()).and_then(|value| value.try_into().ok()).unwrap_or(1)
 }
 
-fn cell_attrs(cell: &Node) -> Map<String, Value> {
+pub(crate) fn cell_attrs(cell: &Node) -> Map<String, Value> {
     cell.attrs().and_then(Value::as_object).cloned().unwrap_or_default()
 }
 
 fn change_colspan(cell: &Node, col: usize, adding: bool) -> Map<String, Value> {
     let mut attrs = cell_attrs(cell);
+    if !adding {
+        return remove_col_span(attrs, col, 1);
+    }
     let colspan = get_span(cell, "colspan");
-    attrs.insert("colspan".into(), json!(if adding { colspan + 1 } else { colspan - 1 }));
+    attrs.insert("colspan".into(), json!(colspan + 1));
     if let Some(widths) = attrs.get_mut("colwidth").and_then(Value::as_array_mut) {
-        if adding {
-            widths.insert(col.min(widths.len()), json!(0));
-        } else if col < widths.len() {
-            widths.remove(col);
-            if !widths.iter().any(|width| width.as_f64().is_some_and(|width| width > 0.0)) {
-                attrs.insert("colwidth".into(), Value::Null);
-            }
+        widths.insert(col.min(widths.len()), json!(0));
+    }
+    attrs
+}
+
+pub(crate) fn remove_col_span(mut attrs: Map<String, Value>, col: usize, count: usize) -> Map<String, Value> {
+    let span = attrs.get("colspan").and_then(Value::as_u64).unwrap_or(1);
+    attrs.insert("colspan".into(), json!(span.saturating_sub(count as u64)));
+    if let Some(widths) = attrs.get_mut("colwidth").and_then(Value::as_array_mut) {
+        let from = col.min(widths.len());
+        let end = col.saturating_add(count).min(widths.len());
+        widths.drain(from..end);
+        if !widths.iter().any(|width| width.as_f64().is_some_and(|width| width > 0.0)) {
+            attrs.insert("colwidth".into(), Value::Null);
         }
     }
     attrs
 }
 
-fn set_attrs(tr: &mut Transaction, pos: usize, attrs: Map<String, Value>) {
+pub(crate) fn set_attrs(tr: &mut Transaction, pos: usize, attrs: Map<String, Value>) {
     tr.apply_transform(|transform| { transform.set_node_markup(pos, None, Some(Value::Object(attrs)), None); });
 }

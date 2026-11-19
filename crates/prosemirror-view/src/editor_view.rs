@@ -161,24 +161,32 @@ impl<H: ViewHost> EditorView<H> {
         if !self.editable() || !self.composing() {
             return false;
         }
+        let previous = self.ime.state.clone();
         let mut tr = self.ime.handle_composition_update(&self.state, text);
         tr.set_meta("composition", json!(self.composition));
-        self.dispatch(tr)
+        if self.dispatch(tr) {
+            true
+        } else {
+            self.ime.state = previous;
+            false
+        }
     }
 
     pub fn composition_end(&mut self, text: &str) -> bool {
         if !self.editable() || !self.composing() {
             return false;
         }
+        let previous = self.ime.state.clone();
         let mut tr = self.ime.handle_composition_end(&self.state, text);
         tr.set_meta("composition", json!(self.composition));
-        let committed = self.dispatch(tr);
-        if committed {
-            if let Some(tr) = self.state.handle_composition_end() {
-                self.dispatch(tr);
-            }
+        if !self.dispatch(tr) {
+            self.ime.state = previous;
+            return false;
         }
-        committed
+        if let Some(tr) = self.state.handle_composition_end() {
+            self.dispatch(tr);
+        }
+        true
     }
 
     pub fn pos_at_coords(&self, x: f32, y: f32) -> Option<usize> {

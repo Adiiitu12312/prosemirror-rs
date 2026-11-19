@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use prosemirror_state::{EditorState, EditorStateConfig, Plugin, Selection};
 use prosemirror_test_builder::{doc, p, test_schema};
@@ -99,4 +100,18 @@ fn applies_composition_updates_and_commits_through_the_view() {
     assert!(view.composition_end("日本"));
     assert!(!view.composing());
     assert_eq!(view.state().doc.text_between(1, 8), "hello日本");
+}
+
+#[test]
+fn keeps_composition_positions_when_a_transaction_is_filtered() {
+    let host = Rc::new(RefCell::new(HostState::default()));
+    let accept = AtomicBool::new(false);
+    let plugin = Plugin::unkeyed(None).with_filter_transaction(move |_, _| accept.swap(true, Ordering::Relaxed));
+    let mut view = EditorView::new(Host(host), state(vec![plugin]), EditorProps::default());
+
+    view.composition_start();
+    assert!(!view.composition_update("discard"));
+    assert!(view.composition_update("preview"));
+    assert!(view.composition_end("日"));
+    assert_eq!(view.state().doc.text_between(1, 7), "hello日");
 }

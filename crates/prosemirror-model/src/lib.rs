@@ -10,6 +10,7 @@ pub mod replace;
 pub mod resolved_pos;
 pub mod schema;
 pub mod slice;
+pub mod table_map;
 mod to_dom;
 
 pub use error::ModelError;

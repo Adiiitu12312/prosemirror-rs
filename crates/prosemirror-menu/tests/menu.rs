@@ -241,6 +241,18 @@ fn pointer_hover_expands_submenu_and_an_outside_click_closes_dropdown() {
 }
 
 #[test]
+fn one_item_popup_leaves_focus_on_the_trigger() {
+    let popup = Dropdown::new(vec![item("Only item")], DropdownOptions::default());
+    let mut menu = menu_bar(vec![vec![popup.into()]], MenuBarOptions::default());
+    let state = editor(1, Vec::new());
+    let path = vec![0, 0];
+    let mut host = Host { focus: MenuFocus::Control(path.clone()), ..Host::default() };
+    assert!(menu.handle_key(&path, MenuKey::Enter, &state, &mut host));
+    assert_eq!(host.focus, MenuFocus::Control(path));
+    assert_eq!(menu.snapshot(&state, &host).unwrap().groups[0].items[0].aria_expanded, Some(true));
+}
+
+#[test]
 fn toolbar_floats_with_measured_scroll_geometry_and_frees_the_selection() {
     let mut menu = menu_bar(Vec::new(), MenuBarOptions { floating: true, ..MenuBarOptions::default() });
     let mut geometry = FloatingGeometry {

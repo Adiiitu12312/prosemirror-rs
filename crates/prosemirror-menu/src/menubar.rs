@@ -188,7 +188,9 @@ impl MenuBar {
         let current = paths.iter().position(|candidate| candidate == path);
         let orientation = if scope.is_empty() { Orientation::Horizontal } else { Orientation::Vertical };
         if let Some(index) = keyboard_move_focus(&visible, current, key, orientation) {
-            self.focus_control(&paths[index], host);
+            if paths.len() > 1 {
+                self.focus_control(&paths[index], host);
+            }
             true
         } else {
             false
@@ -262,6 +264,9 @@ impl MenuBar {
         state: &EditorState, host: &mut dyn MenuHost,
     ) {
         let (paths, visible) = scope_controls(&self.content, scope, state);
+        if paths.len() <= 1 {
+            return;
+        }
         let current = current.and_then(|current| paths.iter().position(|path| path == current));
         if let Some(index) = find_focusable_index(&visible, current, direction) {
             self.focus_control(&paths[index], host);
