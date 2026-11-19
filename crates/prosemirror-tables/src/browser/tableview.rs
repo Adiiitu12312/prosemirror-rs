@@ -35,7 +35,11 @@ impl BrowserTableView {
     }
 
     pub fn update(&mut self, node: &Node) -> Result<bool, JsValue> {
-        if node.type_name() != self.node.type_name() {
+        let same_type = node.node_type().zip(self.node.node_type()).map_or_else(
+            || node.type_name() == self.node.type_name(),
+            |(next, previous)| std::ptr::eq(next, previous),
+        );
+        if !same_type {
             return Ok(false);
         }
         update_dom_columns_on_resize(node, &self.colgroup, &self.table, self.default_cell_min_width, None)?;

@@ -79,6 +79,7 @@ jobs:
         prosemirror-dropcursor
         prosemirror-menu
         prosemirror-example-setup
+        prosemirror-tables
     strategy:
       fail-fast: false
       matrix:

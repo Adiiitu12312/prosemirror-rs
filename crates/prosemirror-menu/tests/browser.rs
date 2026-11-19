@@ -101,6 +101,18 @@ fn inserts_before_or_after_and_restores_existing_mount_on_destroy() {
 }
 
 #[wasm_bindgen_test]
+fn dropping_the_view_releases_the_toolbar_and_its_listeners() {
+    let (view, space, container) = setup(vec![vec![item("Item")]], Default::default());
+    let editor = view.dom();
+    let weak = view.downgrade();
+    drop(view);
+    assert!(weak.upgrade().is_none());
+    assert!(container.first_child().unwrap().is_same_node(Some(&editor)));
+    assert!(container.query_selector("[role=toolbar]").unwrap().is_none());
+    space.remove();
+}
+
+#[wasm_bindgen_test]
 fn updates_visibility_and_accessibility_after_dispatched_actions() {
     let action = MenuItem::new(MenuItemSpec {
         label: Some("Append".into()),
@@ -207,8 +219,11 @@ fn caches_svg_symbols_inside_the_editors_shadow_root() {
     shadow.append_child(&container).unwrap();
     let icon = icons()["strong"].clone();
     let icon_item = || MenuItem::new(MenuItemSpec { icon: Some(icon.clone()), ..Default::default() }).into();
+    let dropdown = Dropdown::new(vec![item("First"), item("Second")], DropdownOptions {
+        label: Some("Dropdown".into()), ..Default::default()
+    });
     let view = BrowserView::new(Mount::Append(container.clone().into()), state(), BrowserViewProps {
-        plugin_views: vec![menu_bar(vec![vec![icon_item(), icon_item()]], Default::default())],
+        plugin_views: vec![menu_bar(vec![vec![icon_item(), icon_item(), dropdown.into()]], Default::default())],
         ..Default::default()
     }).unwrap();
     assert_eq!(container.query_selector_all("button svg use").unwrap().length(), 2);
@@ -216,6 +231,11 @@ fn caches_svg_symbols_inside_the_editors_shadow_root() {
     assert_eq!(collection.query_selector_all("symbol").unwrap().length(), 1);
     let symbol = collection.first_child().unwrap().unchecked_into::<web_sys::Element>();
     assert_eq!(symbol.id(), icon.symbol_id().unwrap());
+    let trigger = query(&container, ".ProseMirror-menu-dropdown");
+    trigger.click();
+    assert_eq!(trigger.get_attribute("aria-expanded").as_deref(), Some("true"));
+    space.click();
+    assert_eq!(trigger.get_attribute("aria-expanded").as_deref(), Some("false"));
     view.destroy();
     space.remove();
 }
@@ -247,6 +267,27 @@ fn intercepts_a_browser_action_before_the_native_command() {
     assert!(handled.get());
     assert_eq!(view.state().doc.text_content(), "!foo");
     assert!(view.has_focus());
+    view.destroy();
+    space.remove();
+}
+
+#[wasm_bindgen_test]
+fn preserves_focus_taken_by_a_nonblocking_prompt() {
+    let prompt = element("input");
+    let focus = prompt.clone();
+    let (view, space, container) = setup(vec![vec![item("Open prompt")]], BrowserMenuOptions {
+        activate: Some(Rc::new(move |_, _, _, _| {
+            focus.focus().unwrap();
+            true
+        })),
+        ..Default::default()
+    });
+    space.append_child(&prompt).unwrap();
+    let button = query(&container, "button");
+    button.focus().unwrap();
+    assert!(key(&button, "Enter"));
+    assert!(focused(&prompt));
+    assert!(!view.has_focus());
     view.destroy();
     space.remove();
 }

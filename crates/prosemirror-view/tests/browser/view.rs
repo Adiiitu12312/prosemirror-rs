@@ -186,8 +186,17 @@ fn routes_native_clipboard_events() {
     let copied = cut.clipboard_data().unwrap();
     assert_eq!(copied.get_data("text/plain").unwrap(), "two");
     assert_eq!(view.state().doc, doc!(p!("one ")).node);
-    init.set_clipboard_data(Some(&copied));
+    let paste_data = DataTransfer::new().unwrap();
+    paste_data.set_data("text/plain", &copied.get_data("text/plain").unwrap()).unwrap();
+    paste_data.set_data("text/html", &copied.get_data("text/html").unwrap()).unwrap();
+    init.set_clipboard_data(Some(&paste_data));
     let paste = ClipboardEvent::new_with_event_init_dict("paste", &init).unwrap();
+    if paste.clipboard_data().is_none_or(|data| data.get_data("text/plain").unwrap().is_empty()) {
+        // Firefox empties ClipboardEventInit data for synthetic paste events.
+        let descriptor = js_sys::Object::new();
+        js_sys::Reflect::set(descriptor.as_ref(), &"value".into(), paste_data.as_ref()).unwrap();
+        js_sys::Reflect::define_property(paste.as_ref(), &"clipboardData".into(), &descriptor).unwrap();
+    }
     view.dom().dispatch_event(&paste).unwrap();
     assert!(paste.default_prevented());
     assert_eq!(view.state().doc, doc!(p!("one two")).node);

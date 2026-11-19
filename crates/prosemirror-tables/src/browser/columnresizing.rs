@@ -12,6 +12,7 @@ use web_sys::{Document, EventTarget, HtmlElement, MouseEvent};
 use super::drag::{dom_cell, mouse_handler, report, DragSessions, Listener};
 use super::tableview::{apply_layout, BrowserTableView};
 use crate::columnresizing::{column_decorations, Edge};
+use crate::tableview::update_columns_on_resize;
 use crate::{cell_around, table_node_types, ColumnResizingOptions, ResizeState, TableRect, TableRole};
 
 const RESIZE_WIDGET: u64 = 0x7461_626c_6572_6573;
@@ -110,7 +111,7 @@ fn mouse_down(
         .and_then(|cell| cell.dyn_into::<HtmlElement>().ok()).map_or(0.0, |cell| f64::from(cell.offset_width()));
     let Some(transaction) = options.start_drag(&state, x, width) else { return Ok(false) };
     view.dispatch(transaction)?;
-    preview(view, options, x)?;
+    preview(view, options, None)?;
 
     let target: EventTarget = window.into();
     let weak = view.downgrade();
@@ -131,7 +132,7 @@ fn mouse_down(
         if event.buttons() == 0 && event.which() == 0 {
             report(finish(&view, &sessions, options, x));
         } else {
-            report(preview(&view, options, x));
+            report(preview(&view, options, Some(x)));
         }
     })?;
     sessions.start(view.dom(), vec![mouseup, mousemove]);
@@ -151,11 +152,13 @@ fn finish(view: &BrowserView, sessions: &DragSessions, options: ColumnResizingOp
     Ok(())
 }
 
-fn preview(view: &BrowserView, options: ColumnResizingOptions, x: f64) -> Result<(), JsValue> {
+fn preview(view: &BrowserView, options: ColumnResizingOptions, x: Option<f64>) -> Result<(), JsValue> {
     let state = view.state();
-    let Some(layout) = options.preview(&state, x) else { return Ok(()) };
-    let Some(handle) = ResizeState::get(&state).and_then(|resize| resize.active_handle) else { return Ok(()) };
+    let Some((handle, dragging)) = ResizeState::get(&state).and_then(|resize| resize.active_handle.zip(resize.dragging))
+    else { return Ok(()) };
     let Some(rect) = TableRect::from_cells(&state.doc, handle, handle) else { return Ok(()) };
+    let width = x.map_or(dragging.start_width, |x| options.dragged_width(dragging, x));
+    let layout = update_columns_on_resize(&rect.table, options.default_cell_min_width, Some((rect.rect.right - 1, width)));
     let mut dom = view.dom_at_pos(rect.table_start, 0).map(|(dom, _)| dom);
     while let Some(current) = dom {
         if current.node_name() == "TABLE" {

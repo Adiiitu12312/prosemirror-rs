@@ -6,7 +6,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use prosemirror_state::{EditorState, Transaction};
-use prosemirror_view::browser::{BrowserView, PluginView, PluginViewFactory};
+use prosemirror_view::browser::{BrowserView, PluginView, PluginViewFactory, WeakBrowserView};
 use serde_json::{Map, Value};
 use wasm_bindgen::{closure::Closure, JsCast, JsValue};
 use web_sys::{
@@ -54,7 +54,8 @@ struct BrowserMenuView {
 }
 
 struct MenuView {
-    view: BrowserView,
+    view: WeakBrowserView,
+    editor: HtmlElement,
     document: Document,
     window: Window,
     wrapper: HtmlElement,
@@ -65,6 +66,7 @@ struct MenuView {
     options: BrowserMenuOptions,
     original_parent: bool,
     spacer: RefCell<Option<HtmlElement>>,
+    last_menu_click: RefCell<Option<(Event, MenuPath)>>,
     focus_generation: Cell<u32>,
     destroyed: Cell<bool>,
 }
@@ -93,9 +95,10 @@ impl BrowserMenuView {
             wrapper.append_child(child)?;
         }
         let inner = Rc::new(MenuView {
-            view: view.clone(), document, window, wrapper, toolbar,
+            view: view.downgrade(), editor, document, window, wrapper, toolbar,
             dom: RefCell::new(dom), dom_root: RefCell::new(root), model: RefCell::new(model),
             options, original_parent: old_parent.is_some(), spacer: RefCell::new(None),
+            last_menu_click: RefCell::new(None),
             focus_generation: Cell::new(0), destroyed: Cell::new(false),
         });
         let mut result = Self { inner, listeners: Vec::new() };
@@ -118,6 +121,7 @@ impl BrowserMenuView {
                 return Ok(())
             };
             let Some(mouse) = event.dyn_ref::<MouseEvent>() else { return Ok(()) };
+            inner.last_menu_click.replace(Some((event.clone(), path.clone())));
             inner.activate(&path, MenuEvent {
                 source: if mouse.detail() == 0 { MenuEventSource::Keyboard } else { MenuEventSource::Pointer },
                 shift: mouse.shift_key(), ctrl: mouse.ctrl_key(), alt: mouse.alt_key(), meta: mouse.meta_key(),
@@ -137,8 +141,9 @@ impl BrowserMenuView {
                     shift: event.shift_key(), ctrl: event.ctrl_key(), alt: event.alt_key(), meta: event.meta_key(),
                 })?
             } else {
-                let state = inner.view.state();
-                let mut host = inner.host();
+                let Some(view) = inner.view.upgrade() else { return Ok(()) };
+                let state = view.state();
+                let mut host = inner.host(&view);
                 let handled = inner.model.borrow_mut().handle_key(&path, key, &state, &mut host);
                 if handled {
                     inner.refresh(None)?;
@@ -183,8 +188,12 @@ impl BrowserMenuView {
             inner.refresh(None)
         })?;
         self.add(&window, "click", |inner, event| {
-            let path = event_element(event).filter(|element| inner.toolbar.contains(Some(element)))
-                .and_then(|element| control_path(&element, false));
+            // Outside the shadow tree the browser retargets the same click.
+            let inside = inner.last_menu_click.take().filter(|(seen, _)| seen == event).map(|(_, path)| path);
+            let path = inside.or_else(|| {
+                event_element(event).filter(|element| inner.toolbar.contains(Some(element)))
+                    .and_then(|element| control_path(&element, false))
+            });
             inner.model.borrow_mut().outside_click(path.as_ref());
             inner.refresh(None)
         })?;
@@ -222,8 +231,8 @@ impl BrowserMenuView {
 }
 
 impl PluginView for BrowserMenuView {
-    fn update(&mut self, _: &BrowserView, _: &EditorState) {
-        report(self.inner.update());
+    fn update(&mut self, view: &BrowserView, _: &EditorState) {
+        report(self.inner.update(view));
     }
 
     fn destroy(&mut self) {
@@ -239,13 +248,14 @@ impl Drop for BrowserMenuView {
 }
 
 impl MenuView {
-    fn host(&self) -> Host<'_> {
-        Host { menu: self, dispatch: Vec::new(), focus: None }
+    fn host<'a>(&'a self, view: &'a BrowserView) -> Host<'a> {
+        Host { menu: self, view, dispatch: Vec::new(), focus: None }
     }
 
     fn activate(&self, path: &MenuPath, event: MenuEvent) -> Result<bool, JsValue> {
-        let state = self.view.state();
-        let mut host = self.host();
+        let Some(view) = self.view.upgrade() else { return Ok(false) };
+        let state = view.state();
+        let mut host = self.host(&view);
         if let Some(activate) = &self.options.activate {
             let item = {
                 let model = self.model.borrow();
@@ -257,7 +267,7 @@ impl MenuView {
             };
             if let Some(item) = item {
                 let focused = host.focus();
-                if activate(&self.view, path, &item, &event) {
+                if activate(&view, path, &item, &event) {
                     if event.source == MenuEventSource::Pointer {
                         self.model.borrow_mut().outside_click(None);
                     }
@@ -277,22 +287,23 @@ impl MenuView {
         Ok(handled)
     }
 
-    fn update(&self) -> Result<(), JsValue> {
-        self.refresh(Some(&self.view.state()))?;
+    fn update(&self, view: &BrowserView) -> Result<(), JsValue> {
+        self.refresh(Some(&view.state()))?;
         self.scroll_selection()
     }
 
     fn refresh(&self, state: Option<&EditorState>) -> Result<(), JsValue> {
-        if self.destroyed.get() || self.view.is_destroyed() {
+        let Some(view) = self.view.upgrade() else { return Ok(()) };
+        if self.destroyed.get() || view.is_destroyed() {
             return Ok(());
         }
-        let mut host = self.host();
+        let mut host = self.host(&view);
         let snapshot = if let Some(state) = state {
             self.model.borrow_mut().update(state, &mut host)
         } else {
-            self.model.borrow().snapshot(&self.view.state(), &host)
+            self.model.borrow().snapshot(&view.state(), &host)
         }.map_err(menu_error)?;
-        let root = self.view.root();
+        let root = view.root();
         if !root.is_same_node(Some(&self.dom_root.borrow())) {
             self.toolbar.set_text_content(None);
             *self.dom.borrow_mut() = MenuDom::new(&self.document, &root, &self.toolbar, &snapshot.groups)?;
@@ -308,13 +319,13 @@ impl MenuView {
 
     fn focused(&self) -> MenuFocus {
         // The document reports the shadow host, so query the shadow root first.
-        let active = self.view.root().dyn_into::<ShadowRoot>().ok().and_then(|root| root.active_element())
+        let active = self.editor.get_root_node().dyn_into::<ShadowRoot>().ok().and_then(|root| root.active_element())
             .or_else(|| self.document.active_element());
         if let Some(active) = active {
             if self.toolbar.contains(Some(&active)) {
                 return control_path(&active, true).map_or(MenuFocus::Other, MenuFocus::Control);
             }
-            if self.view.dom().contains(Some(&active)) {
+            if self.editor.contains(Some(&active)) {
                 return MenuFocus::Editor;
             }
         }
@@ -390,7 +401,7 @@ impl MenuView {
         }
         let selection = self.document.get_selection()?;
         let Some(selection) = selection.filter(|selection| selection.range_count() > 0) else { return Ok(()) };
-        let Some(focus) = selection.focus_node().filter(|node| self.view.dom().contains(Some(node))) else { return Ok(()) };
+        let Some(focus) = selection.focus_node().filter(|node| self.editor.contains(Some(node))) else { return Ok(()) };
         let Some(rects) = selection.get_range_at(0)?.get_client_rects() else { return Ok(()) };
         let rects: Vec<_> = (0..rects.length()).filter_map(|index| rects.item(index)).map(|value| rect(&value)).collect();
         let toolbar = rect(&self.toolbar.get_bounding_client_rect());
@@ -422,15 +433,15 @@ impl MenuView {
             return;
         }
         self.cancel_focusout();
-        let editor = self.view.dom();
+        let editor = &self.editor;
         if let Some(parent) = self.wrapper.parent_node() {
             if editor.parent_node().is_some_and(|parent| self.wrapper.is_same_node(Some(&parent))) {
-                report(parent.replace_child(&editor, &self.wrapper).map(|_| ()));
+                report(parent.replace_child(editor, &self.wrapper).map(|_| ()));
             } else {
                 self.wrapper.remove();
             }
         } else if !self.original_parent && editor.parent_node().is_some_and(|parent| self.wrapper.is_same_node(Some(&parent))) {
-            report(self.wrapper.remove_child(&editor).map(|_| ()));
+            report(self.wrapper.remove_child(editor).map(|_| ()));
         }
     }
 }
@@ -447,6 +458,7 @@ impl MenuHost for UnattachedHost<'_> {
 
 struct Host<'a> {
     menu: &'a MenuView,
+    view: &'a BrowserView,
     dispatch: Vec<Transaction>,
     focus: Option<MenuFocus>,
 }
@@ -456,10 +468,10 @@ impl Host<'_> {
         // Dispatch and focus can synchronously call back into the toolbar.
         // Release the model and DOM borrows before running their effects.
         for transaction in self.dispatch {
-            self.menu.view.dispatch(transaction)?;
+            self.view.dispatch(transaction)?;
         }
         match self.focus {
-            Some(MenuFocus::Editor) => self.menu.view.focus()?,
+            Some(MenuFocus::Editor) => self.view.focus()?,
             Some(MenuFocus::Control(path)) => {
                 let button = self.menu.dom.borrow().button(&path).cloned();
                 if let Some(button) = button {
@@ -495,7 +507,7 @@ impl MenuHost for Host<'_> {
 
     fn prompt(&mut self, prompt: &MenuPrompt) -> Option<Value> {
         if let Some(callback) = &self.menu.options.prompt {
-            return callback(&self.menu.view, prompt);
+            return callback(self.view, prompt);
         }
         let mut attrs = Map::new();
         for field in &prompt.fields {

@@ -104,7 +104,9 @@ fn cell_dom(node: &Node, tag: &str) -> DomOutputSpec {
             }
         }
         if let Some(widths) = cell["colwidth"].as_array() {
-            let widths = widths.iter().map(Value::to_string).collect::<Vec<_>>().join(",");
+            let widths = widths.iter().map(|width| {
+                width.as_f64().map_or_else(|| width.to_string(), |number| number.to_string())
+            }).collect::<Vec<_>>().join(",");
             attrs.push(DomAttribute::new("data-colwidth", widths));
         }
     }

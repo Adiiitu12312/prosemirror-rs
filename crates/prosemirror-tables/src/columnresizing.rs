@@ -151,7 +151,7 @@ impl ColumnResizingOptions {
         metadata(state, Action::Dragging(None))
     }
 
-    fn dragged_width(self, dragging: Dragging, x: f64) -> f64 {
+    pub(crate) fn dragged_width(self, dragging: Dragging, x: f64) -> f64 {
         self.cell_min_width.max(dragging.start_width + x - dragging.start_x)
     }
 }

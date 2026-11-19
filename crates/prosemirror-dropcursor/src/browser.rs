@@ -12,6 +12,8 @@ use crate::{DragOver, DropCursor, DropCursorGeometry, DropCursorOptions, DropPos
 /// Called for the node under the pointer when its schema does not disable the cursor.
 pub type DisableDropCursor = Rc<dyn Fn(&BrowserView, DropPosition, &DragEvent) -> bool>;
 
+type DragEventListener = (&'static str, Closure<dyn FnMut(Event)>);
+
 /// Creates a browser plugin that draws and removes the drop cursor during native drags.
 pub fn browser_plugin(options: DropCursorOptions) -> BrowserViewProps {
     plugin_props(options, None)
@@ -35,7 +37,7 @@ fn plugin_props(mut options: DropCursorOptions, disable: Option<DisableDropCurso
 struct DropCursorView {
     root: HtmlElement,
     state: Rc<RefCell<BrowserCursor>>,
-    handlers: Vec<(&'static str, Closure<dyn FnMut(Event)>)>,
+    handlers: Vec<DragEventListener>,
 }
 
 impl DropCursorView {
