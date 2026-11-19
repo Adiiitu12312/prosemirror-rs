@@ -2,6 +2,7 @@ MIT License
 
 Copyright (c) 2026 prosemirror-rs Contributors
 Copyright (C) 2015-2017 by Marijn Haverbeke <marijn@haverbeke.berlin> and others (ported ProseMirror source and tests)
+Copyright (C) 2016 by Marijn Haverbeke and others (ported w3c-keyname source)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

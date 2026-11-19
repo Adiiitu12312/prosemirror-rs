@@ -86,6 +86,8 @@ type FilterTransaction = dyn Fn(&Transaction, &EditorState) -> bool + Send + Syn
 type AppendTransaction =
     dyn Fn(&[Arc<Transaction>], &EditorState, &EditorState) -> Option<Transaction> + Send + Sync;
 type Prop = dyn Fn(&Plugin) -> Value + Send + Sync;
+type TextInput = dyn Fn(&EditorState, usize, usize, &str, bool) -> Option<Transaction> + Send + Sync;
+type CompositionEnd = dyn Fn(&EditorState) -> Option<Transaction> + Send + Sync;
 
 #[derive(Clone)]
 pub struct Plugin {
@@ -94,6 +96,8 @@ pub struct Plugin {
     pub spec: HashMap<String, Value>,
     pub(crate) filter_transaction: Option<Arc<FilterTransaction>>,
     pub(crate) append_transaction: Option<Arc<AppendTransaction>>,
+    text_input: Option<Arc<TextInput>>,
+    composition_end: Option<Arc<CompositionEnd>>,
     props: HashMap<String, Arc<Prop>>,
 }
 
@@ -105,6 +109,8 @@ impl Plugin {
             spec: HashMap::new(),
             filter_transaction: None,
             append_transaction: None,
+            text_input: None,
+            composition_end: None,
             props: HashMap::new(),
         }
     }
@@ -139,6 +145,38 @@ impl Plugin {
     ) -> Self {
         self.props.insert(name.into(), Arc::new(prop));
         self
+    }
+
+    pub fn with_text_input(
+        mut self,
+        handle: impl Fn(&EditorState, usize, usize, &str, bool) -> Option<Transaction>
+            + Send + Sync + 'static,
+    ) -> Self {
+        self.text_input = Some(Arc::new(handle));
+        self
+    }
+
+    pub fn with_composition_end(
+        mut self,
+        handle: impl Fn(&EditorState) -> Option<Transaction> + Send + Sync + 'static,
+    ) -> Self {
+        self.composition_end = Some(Arc::new(handle));
+        self
+    }
+
+    pub fn handle_text_input(
+        &self,
+        state: &EditorState,
+        from: usize,
+        to: usize,
+        text: &str,
+        composing: bool,
+    ) -> Option<Transaction> {
+        self.text_input.as_ref()?.as_ref()(state, from, to, text, composing)
+    }
+
+    pub fn handle_composition_end(&self, state: &EditorState) -> Option<Transaction> {
+        self.composition_end.as_ref()?.as_ref()(state)
     }
 
     pub fn call_prop(&self, name: &str) -> Option<Value> {

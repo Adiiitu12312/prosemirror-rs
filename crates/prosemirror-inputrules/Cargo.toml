@@ -1,0 +1,17 @@
+[package]
+name = "prosemirror-inputrules"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Pattern-driven ProseMirror text input rules and input-rule undo"
+
+[dependencies]
+prosemirror-model.workspace = true
+prosemirror-state.workspace = true
+prosemirror-transform.workspace = true
+regress = { version = "0.12", features = ["utf16"] }
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+prosemirror-test-builder.workspace = true

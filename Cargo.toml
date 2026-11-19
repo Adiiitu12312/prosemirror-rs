@@ -6,6 +6,7 @@ members = [
     "crates/prosemirror-state",
     "crates/prosemirror-history",
     "crates/prosemirror-collab",
+    "crates/prosemirror-keymap",
     "crates/prosemirror-commands",
     "crates/prosemirror-schema-basic",
     "crates/prosemirror-schema-list",

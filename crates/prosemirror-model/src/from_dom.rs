@@ -742,13 +742,19 @@ impl<'a, 'b> ParseContext<'a, 'b> {
         if let Some(external) = external {
             ancestors.extend(external.path.iter().map(|entry| entry.node.type_name()));
         }
-        for depth in usize::from(!use_root)..=self.open {
-            if let Some(name) = self.nodes[depth].type_name.as_deref() {
+        for node in self.nodes[..=self.open].iter().skip(usize::from(!use_root)) {
+            if let Some(name) = node.type_name.as_deref() {
                 ancestors.push(name);
             }
         }
         context.split('|').any(|branch| {
-            let path: Vec<_> = branch.trim().trim_matches('/').split('/').collect();
+            let mut path: Vec<_> = branch.trim().split('/').collect();
+            if path.last() == Some(&"") {
+                path.pop();
+            }
+            if path.first() == Some(&"") {
+                path.remove(0);
+            }
             match_ancestors(&ancestors, &path, &self.parser.schema)
         })
     }

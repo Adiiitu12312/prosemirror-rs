@@ -51,11 +51,8 @@ pub fn nodes() -> Vec<(String, NodeSpec)> {
                 group: block(),
                 defining: true,
                 parse_dom: (1..=6).map(|level| DomParseRule {
-                    get_tag_attrs: Some(|element| {
-                        let level = element.name[1..].parse::<u8>().ok();
-                        ParseAttrs::Accept(Some(json!({ "level": level })))
-                    }),
-                    ..DomParseRule::tag(&format!("h{level}"))
+                    attrs: Some(json!({ "level": level })),
+                    ..DomParseRule::tag(format!("h{level}"))
                 }).collect(),
                 to_dom: Some(|node| {
                     let level = node.attrs().and_then(|attrs| attrs["level"].as_u64()).unwrap_or(1);

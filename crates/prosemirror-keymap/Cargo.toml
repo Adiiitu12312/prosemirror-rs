@@ -1,0 +1,12 @@
+[package]
+name = "prosemirror-keymap"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ProseMirror keyboard bindings for native and web editor integrations"
+
+[dependencies]
+prosemirror-state.workspace = true
+
+[dev-dependencies]
+prosemirror-schema-basic.workspace = true

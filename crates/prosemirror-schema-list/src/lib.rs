@@ -12,9 +12,15 @@ pub fn ordered_list() -> NodeSpec {
         attrs: [("order".into(), AttributeSpec::new(Some(json!(1)), Some("number")))].into(),
         parse_dom: vec![DomParseRule {
             get_tag_attrs: Some(|element| {
-                let order = element.attr("start").map_or(1.0, |start| {
+                let order = element.attr("start").map_or_else(|| json!(1), |start| {
                     let start = start.trim();
-                    if start.is_empty() { 0.0 } else { start.parse().unwrap_or(f64::NAN) }
+                    if start.is_empty() {
+                        json!(0)
+                    } else if let Ok(integer) = start.parse::<i64>() {
+                        json!(integer)
+                    } else {
+                        json!(start.parse::<f64>().unwrap_or(f64::NAN))
+                    }
                 });
                 ParseAttrs::Accept(Some(json!({ "order": order })))
             }),

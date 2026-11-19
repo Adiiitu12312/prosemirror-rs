@@ -116,7 +116,7 @@ struct DecorationTree {
     children: Vec<ChildDecorations>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChildDecorations {
     pub from: usize,
     pub to: usize,
@@ -181,18 +181,113 @@ impl DecorationSet {
         if self.is_empty() || mapping.maps.is_empty() {
             return self.clone();
         }
-        let mapped = self.find(None, None).into_iter().filter_map(|deco| {
-            let mapped = deco.map(mapping);
+        self.map_inner(mapping, doc, 0, 0, &mut on_remove).unwrap_or_default()
+    }
+
+    fn map_inner(
+        &self, mapping: &Mapping, node: &Node, offset: usize, old_offset: usize,
+        on_remove: &mut impl FnMut(&Value),
+    ) -> Option<Self> {
+        let mut local: Vec<_> = self.local().iter().filter_map(|span| {
+            let mapped = map_span(span, mapping, offset, old_offset).filter(|span| span.valid(node));
             if mapped.is_none() {
-                on_remove(deco.spec());
+                on_remove(span.spec());
             }
             mapped
         }).collect();
-        let mut candidates = HashMap::new();
-        self.collect_reuse_candidates(mapping, 0, &mut candidates);
-        let mut result = build_tree(doc, mapped, 0, &mut on_remove);
-        result.reuse_children(0, &candidates);
-        result
+        if self.children().is_empty() {
+            local.sort_by_key(|span| (span.from, span.to));
+            return (!local.is_empty()).then(|| Self(Arc::new(DecorationTree { local, children: Vec::new() })));
+        }
+
+        let mut children = self.children().to_vec();
+        // An untouched child can be moved with its decoration tree intact.
+        // Touched children are either remapped in place or gathered and rebuilt.
+        let mut touched = vec![ChildChange::Untouched; children.len()];
+        let mut base_offset = old_offset;
+        for map in &mapping.maps {
+            let mut moved = 0_i128;
+            map.for_each(|old_start, old_end, new_start, new_end| {
+                let delta = (new_end - new_start) as i128 - (old_end - old_start) as i128;
+                for (child, change) in children.iter_mut().zip(&mut touched) {
+                    let end = (child.to + base_offset) as i128 - moved;
+                    if *change != ChildChange::Untouched || old_start as i128 > end {
+                        continue;
+                    }
+                    let start = (child.from + base_offset) as i128 - moved;
+                    if old_end as i128 >= start {
+                        *change = if old_start as i128 <= start { ChildChange::Rebuild } else { ChildChange::Remap };
+                    } else if old_start >= base_offset && delta != 0 {
+                        child.from = (child.from as i128 + delta).try_into().expect("child offset");
+                        child.to = (child.to as i128 + delta).try_into().expect("child end");
+                    }
+                }
+                moved += delta;
+            });
+            base_offset = map.map(base_offset, -1);
+        }
+
+        let mut kept = Vec::new();
+        let mut rebuild = false;
+        for ((mut child, old_child), change) in children.into_iter().zip(self.children()).zip(touched) {
+            if change == ChildChange::Untouched {
+                kept.push(child);
+                continue;
+            }
+            if change == ChildChange::Remap {
+                let from = mapping.map(old_child.from + old_offset, 1);
+                let to = mapping.map(old_child.to + old_offset, -1);
+                if let (Some(local_from), Some(local_to)) = (from.checked_sub(offset), to.checked_sub(offset)) {
+                    if local_from < node.content().size() {
+                        let (index, child_offset) = node.content().find_index(local_from);
+                        if let Some(child_node) = node.content().children.get(index) {
+                            if child_offset == local_from && child_offset + child_node.node_size() == local_to {
+                                let mapped = child.decorations.map_inner(
+                                    mapping, child_node, from + 1, old_child.from + old_offset + 1, on_remove,
+                                );
+                                if let Some(mapped) = mapped {
+                                    child.from = local_from;
+                                    child.to = local_to;
+                                    child.decorations = mapped;
+                                    kept.push(child);
+                                } else {
+                                    rebuild = true;
+                                }
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+            rebuild = true;
+            child.decorations.gather_mapped(mapping, offset, old_child.from + old_offset + 1, &mut local, on_remove);
+        }
+        if rebuild {
+            let built = build_tree(node, local, 0, on_remove);
+            local = built.local().to_vec();
+            let mut children = built.children().to_vec();
+            children.extend(kept);
+            children.sort_by_key(|child| child.from);
+            kept = children;
+        }
+        local.sort_by_key(|span| (span.from, span.to));
+        Some(Self(Arc::new(DecorationTree { local, children: kept })))
+    }
+
+    fn gather_mapped(
+        &self, mapping: &Mapping, offset: usize, old_offset: usize, output: &mut Vec<Decoration>,
+        on_remove: &mut impl FnMut(&Value),
+    ) {
+        for span in self.local() {
+            if let Some(mapped) = map_span(span, mapping, offset, old_offset) {
+                output.push(mapped);
+            } else {
+                on_remove(span.spec());
+            }
+        }
+        for child in self.children() {
+            child.decorations.gather_mapped(mapping, offset, old_offset + child.from + 1, output, on_remove);
+        }
     }
 
     fn collect_reuse_candidates<'a>(
@@ -291,6 +386,18 @@ impl DecorationSet {
             node.inline_content() || !matches!(span.kind, DecorationType::Inline { .. })
         }).cloned().collect()
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ChildChange {
+    Untouched,
+    Remap,
+    Rebuild,
+}
+
+fn map_span(span: &Decoration, mapping: &Mapping, offset: usize, old_offset: usize) -> Option<Decoration> {
+    let mapped = span.at(span.from + old_offset, span.to + old_offset).map(mapping)?;
+    Some(mapped.at(mapped.from.checked_sub(offset)?, mapped.to.checked_sub(offset)?))
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

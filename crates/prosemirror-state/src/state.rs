@@ -92,6 +92,22 @@ impl EditorState {
         tr
     }
 
+    pub fn handle_text_input(
+        &self,
+        from: usize,
+        to: usize,
+        text: &str,
+        composing: bool,
+    ) -> Option<Transaction> {
+        self.plugins.iter().find_map(|plugin| {
+            plugin.handle_text_input(self, from, to, text, composing)
+        })
+    }
+
+    pub fn handle_composition_end(&self) -> Option<Transaction> {
+        self.plugins.iter().find_map(|plugin| plugin.handle_composition_end(self))
+    }
+
     pub fn apply(&self, tr: &Transaction) -> Self {
         self.apply_transaction(tr).state
     }
