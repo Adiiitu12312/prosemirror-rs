@@ -94,6 +94,13 @@ impl Selection {
         !matches!(self, Self::Node { .. })
     }
 
+    pub fn range(&self, doc: &Node) -> Result<SelectionRange, ModelError> {
+        Ok(SelectionRange {
+            from: doc.resolve(self.from())?,
+            to: doc.resolve(self.to(doc))?,
+        })
+    }
+
     pub fn selected_node(&self, doc: &Node) -> Option<Node> {
         match self {
             Self::Node { anchor } => doc.resolve(*anchor).ok()?.node_after(),
@@ -218,6 +225,12 @@ impl Selection {
     pub fn bookmark(&self) -> SelectionBookmark {
         SelectionBookmark(self.clone())
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct SelectionRange {
+    pub from: ResolvedPos,
+    pub to: ResolvedPos,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

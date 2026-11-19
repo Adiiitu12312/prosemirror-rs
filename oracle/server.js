@@ -18,10 +18,23 @@ function main() {
 
     if (result.doc) {
       const stepMap = step.getMap();
+      const positions = [];
+      for (let pos = 0; pos <= doc.content.size; pos++) {
+        for (const assoc of [-1, 1]) {
+          const { pos: mapped, deleted, deletedBefore, deletedAfter, deletedAcross } =
+            stepMap.mapResult(pos, assoc);
+          positions.push([mapped, deleted, deletedBefore, deletedAfter, deletedAcross]);
+        }
+      }
+      const inverse = step.invert(doc);
+      const undone = inverse.apply(result.doc);
       const output = {
         success: true,
         doc: result.doc.toJSON(),
         step_map: stepMap.ranges,
+        positions,
+        inverse: inverse.toJSON(),
+        undone: undone.doc?.toJSON() ?? null,
       };
       process.stdout.write(JSON.stringify(output));
     } else {
@@ -31,12 +44,9 @@ function main() {
       };
       process.stdout.write(JSON.stringify(output));
     }
-  } catch (err) {
-    const output = {
-      success: false,
-      error: err.message,
-    };
-    process.stdout.write(JSON.stringify(output));
+  } catch (error) {
+    console.error(error);
+    process.exitCode = 1;
   }
 }
 

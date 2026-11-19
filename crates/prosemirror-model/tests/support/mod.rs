@@ -1,6 +1,8 @@
+#![allow(dead_code, unused_imports)]
+
 use std::sync::OnceLock;
 
-use prosemirror_model::{AttributeSpec, Fragment, MarkSpec, Node, NodeSpec, Schema, Slice};
+use prosemirror_model::{AttributeSpec, Fragment, Mark, MarkSpec, Node, NodeSpec, Schema, Slice};
 use serde_json::{json, Value};
 
 macro_rules! cases {
@@ -15,7 +17,7 @@ macro_rules! cases {
 }
 pub(crate) use cases;
 
-fn schema(content: &str) -> Schema {
+pub(crate) fn schema(content: &str) -> Schema {
     let block = |content: &str| NodeSpec {
         content: Some(content.to_owned()),
         group: Some("block".to_owned()),
@@ -79,7 +81,7 @@ fn position(case: &Value, field: &str) -> usize {
     case[field].as_u64().unwrap().try_into().unwrap()
 }
 
-fn node(schema: &Schema, value: &Value) -> Node {
+pub(crate) fn node(schema: &Schema, value: &Value) -> Node {
     schema.node_from_json(value).unwrap()
 }
 
@@ -126,6 +128,70 @@ fn fill_content(case: &Value, use_middle: bool) {
     }
 }
 
+fn mark_case(basic: &Schema, case: &Value) {
+    let nodes = [
+        ("doc", NodeSpec { content: Some("paragraph+".to_owned()), ..NodeSpec::default() }),
+        ("paragraph", NodeSpec { content: Some("text*".to_owned()), ..NodeSpec::default() }),
+        ("text", NodeSpec::default()),
+    ];
+    let marks = [
+        ("remark", MarkSpec {
+            attributes: [("id".to_owned(), AttributeSpec::required())].into(),
+            excludes: Some(String::new()),
+            inclusive: false,
+            ..MarkSpec::default()
+        }),
+        ("user", MarkSpec {
+            attributes: [("id".to_owned(), AttributeSpec::required())].into(),
+            excludes: Some("_".to_owned()),
+            ..MarkSpec::default()
+        }),
+        ("strong", MarkSpec { excludes: Some("em-group".to_owned()), ..MarkSpec::default() }),
+        ("em", MarkSpec { group: Some("em-group".to_owned()), ..MarkSpec::default() }),
+    ];
+    let custom = Schema::try_new(
+        nodes.into_iter().map(|(name, spec)| (name.to_owned(), spec)).collect(),
+        marks.into_iter().map(|(name, spec)| (name.to_owned(), spec)).collect(),
+        None,
+    ).unwrap();
+    let mark = |value: &Value| {
+        let schema = if value["schema"] == "custom" { &custom } else { basic };
+        schema.mark_from_json(&value["json"]).unwrap()
+    };
+    let set = |value: &Value| {
+        value.as_array().unwrap().iter().map(&mark).collect::<Vec<Mark>>()
+    };
+    match case["kind"].as_str().unwrap() {
+        "sameSet" => assert_eq!(
+            Mark::same_set(&set(&case["a"]), &set(&case["b"])),
+            case["expected"].as_bool().unwrap(),
+        ),
+        "eq" => assert_eq!(
+            mark(&case["a"]) == mark(&case["b"]),
+            case["expected"].as_bool().unwrap(),
+        ),
+        "addToSet" => assert_eq!(
+            Mark::add_to_set(&set(&case["set"]), mark(&case["mark"])),
+            set(&case["expected"]),
+        ),
+        "removeFromSet" => assert_eq!(
+            mark(&case["mark"]).remove_exact_from_set(&set(&case["set"])),
+            set(&case["expected"]),
+        ),
+        "resolved" => {
+            let doc = node(basic, &case["doc"]);
+            let resolved = doc.resolve(position(case, "from")).unwrap();
+            assert_eq!(mark(&case["mark"]).is_in_set(&resolved.marks()), case["expected"].as_bool().unwrap());
+        }
+        "resolvedSet" => {
+            let doc = node(&custom, &case["doc"]);
+            let resolved = doc.resolve(position(case, "from")).unwrap();
+            assert_eq!(resolved.marks(), set(&case["expected"]));
+        }
+        _ => panic!("unknown mark case {case}"),
+    }
+}
+
 pub(crate) fn run(suite: &str, index: usize) {
     static CASES: OnceLock<Value> = OnceLock::new();
     let cases = CASES.get_or_init(|| serde_json::from_str(include_str!("../upstream_cases.json")).unwrap());
@@ -141,6 +207,10 @@ pub(crate) fn run(suite: &str, index: usize) {
     }
 
     let schema = schema("block+");
+    if suite == "mark" {
+        mark_case(&schema, case);
+        return;
+    }
     if suite == "diff" {
         let a = node(&schema, &case["a"]);
         let b = node(&schema, &case["b"]);
@@ -201,3 +271,4 @@ pub(crate) fn run(suite: &str, index: usize) {
         _ => panic!("unknown test suite {suite}"),
     }
 }
+

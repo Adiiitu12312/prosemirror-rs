@@ -479,3 +479,33 @@ fn maps_selection_when_rebasing() {
     });
     undo_once(&mut state);
 }
+
+#[test]
+fn same_composition_stays_in_one_event_after_group_delay() {
+    let mut state = default_state();
+    edit(&mut state, |tr| {
+        tr.insert_text_at_selection("a").set_time(1000).set_meta("composition", json!(3));
+    });
+    edit(&mut state, |tr| {
+        tr.insert_text_at_selection("b").set_time(3000).set_meta("composition", json!(3));
+    });
+    assert_eq!(undo_depth(&state), 1);
+    undo_once(&mut state);
+    assert_eq!(state.doc, doc!(p!()).node);
+}
+
+#[test]
+fn legacy_history_json_still_has_undoable_steps() {
+    let mut state = state(Some(doc!(p!("x")).node), HistoryOptions::default(), vec![]);
+    state.plugin_states.insert(HISTORY_KEY.into(), json!({
+        "done": [{
+            "step": Step::replace(1, 1, Slice::new(text("x"), 0, 0)),
+            "inverted": Step::replace(1, 2, Slice::empty()),
+            "selection": Selection::cursor(1)
+        }],
+        "undone": []
+    }));
+    assert_eq!(undo_depth(&state), 1);
+    undo_once(&mut state);
+    assert_eq!(state.doc, doc!(p!()).node);
+}

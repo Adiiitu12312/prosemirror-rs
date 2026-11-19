@@ -1,0 +1,130 @@
+//! Port of prosemirror-transform 1.10.2 test/test-mapping.ts.
+
+use prosemirror_transform::{Mapping, StepMap};
+
+fn mapping(ranges: &[[usize; 3]], mirror: Option<(usize, usize)>) -> Mapping {
+    let mut mapping = Mapping::from_maps(ranges.iter().map(|range| StepMap::new(range.to_vec())).collect());
+    if let Some((left, right)) = mirror {
+        mapping.set_mirror(left, right);
+    }
+    mapping
+}
+
+fn check_mapping(mapping: Mapping, cases: &[(usize, usize, i32, bool)]) {
+    let inverted = mapping.invert();
+    for &(from, to, assoc, lossy) in cases {
+        assert_eq!(mapping.map(from, assoc), to);
+        if !lossy {
+            assert_eq!(inverted.map(to, assoc), from);
+        }
+    }
+}
+
+fn check_deletion(ranges: &[[usize; 3]], pos: usize, assoc: i32, expected: &str) {
+    let result = mapping(ranges, None).map_result(pos, assoc);
+    let flags = [
+        (result.deleted(), 'd'),
+        (result.deleted_before(), 'b'),
+        (result.deleted_after(), 'a'),
+        (result.deleted_across(), 'x'),
+    ];
+    let found: String = flags.into_iter().filter_map(|(set, flag)| set.then_some(flag)).collect();
+    assert_eq!(found, expected);
+}
+
+#[test]
+fn maps_a_single_insertion() {
+    check_mapping(mapping(&[[2, 0, 4]], None), &[
+        (0, 0, 1, false), (2, 6, 1, false), (2, 2, -1, false), (3, 7, 1, false),
+    ]);
+}
+
+#[test]
+fn maps_a_single_deletion() {
+    check_mapping(mapping(&[[2, 4, 0]], None), &[
+        (0, 0, 1, false), (2, 2, -1, false), (3, 2, 1, true),
+        (6, 2, 1, false), (6, 2, -1, true), (7, 3, 1, false),
+    ]);
+}
+
+#[test]
+fn maps_a_single_replacement() {
+    check_mapping(mapping(&[[2, 4, 4]], None), &[
+        (0, 0, 1, false), (2, 2, 1, false), (4, 6, 1, true),
+        (4, 2, -1, true), (6, 6, -1, false), (8, 8, 1, false),
+    ]);
+}
+
+#[test]
+fn maps_a_mirrored_deletion_and_insertion() {
+    check_mapping(mapping(&[[2, 4, 0], [2, 0, 4]], Some((0, 1))), &[
+        (0, 0, 1, false), (2, 2, 1, false), (4, 4, 1, false), (6, 6, 1, false), (7, 7, 1, false),
+    ]);
+}
+
+#[test]
+fn maps_a_mirrored_insertion_and_deletion() {
+    check_mapping(mapping(&[[2, 0, 4], [2, 4, 0]], Some((0, 1))), &[
+        (0, 0, 1, false), (2, 2, 1, false), (3, 3, 1, false),
+    ]);
+}
+
+#[test]
+fn maps_a_mirrored_deletion_and_insertion_with_an_intervening_insertion() {
+    check_mapping(mapping(&[[2, 4, 0], [1, 0, 1], [3, 0, 4]], Some((0, 2))), &[
+        (0, 0, 1, false), (1, 2, 1, false), (4, 5, 1, false), (6, 7, 1, false), (7, 8, 1, false),
+    ]);
+}
+
+#[test]
+fn detects_deletions_before_a_position() {
+    check_deletion(&[[0, 2, 0]], 2, -1, "db");
+    check_deletion(&[[0, 2, 0]], 2, 1, "b");
+    check_deletion(&[[0, 2, 2]], 2, -1, "db");
+    check_deletion(&[[0, 1, 0], [0, 1, 0]], 2, -1, "db");
+    check_deletion(&[[0, 1, 0]], 2, -1, "");
+}
+
+#[test]
+fn detects_deletions_after_a_position() {
+    check_deletion(&[[2, 2, 0]], 2, -1, "a");
+    check_deletion(&[[2, 2, 0]], 2, 1, "da");
+    check_deletion(&[[2, 2, 2]], 2, 1, "da");
+    check_deletion(&[[2, 1, 0], [2, 1, 0]], 2, 1, "da");
+    check_deletion(&[[3, 2, 0]], 2, -1, "");
+}
+
+#[test]
+fn detects_deletions_across_a_position() {
+    check_deletion(&[[0, 4, 0]], 2, -1, "dbax");
+    check_deletion(&[[0, 4, 0]], 2, 1, "dbax");
+    check_deletion(&[[0, 4, 0]], 2, 1, "dbax");
+    check_deletion(&[[0, 1, 0], [4, 1, 0], [0, 3, 0]], 2, 1, "dbax");
+}
+
+#[test]
+fn detects_deletions_around_a_position() {
+    check_deletion(&[[4, 1, 0], [0, 1, 0]], 2, -1, "");
+    check_deletion(&[[2, 1, 0], [0, 2, 0]], 2, -1, "dba");
+    check_deletion(&[[2, 1, 0], [0, 1, 0]], 2, -1, "a");
+    check_deletion(&[[3, 1, 0], [0, 2, 0]], 2, -1, "db");
+}
+
+#[test]
+fn empty_mapping_slice_preserves_positions_and_flags() {
+    let mapping = mapping(&[[0, 0, 6], [4, 2, 0]], None);
+    let empty = mapping.slice(0, 0);
+    assert_eq!(empty.map(2, 1), 2);
+    assert!(!empty.map_result(2, 1).deleted_after());
+}
+
+#[test]
+fn inverted_map_reports_old_and_new_ranges() {
+    let map = StepMap::new(vec![2, 3, 1, 8, 0, 2]).invert();
+    let mut ranges = Vec::new();
+    map.for_each(|old_from, old_to, new_from, new_to| ranges.push((old_from, old_to, new_from, new_to)));
+    assert_eq!(ranges, [(2, 3, 2, 5), (6, 8, 8, 8)]);
+    let recovery = map.map_result(7, 1).recover.expect("position inside a replaced range");
+    assert!(map.touches(7, recovery));
+    assert!(!map.touches(2, recovery));
+}

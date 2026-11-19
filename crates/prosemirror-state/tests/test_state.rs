@@ -209,3 +209,44 @@ fn generates_new_keys() {
     assert_ne!(Plugin::unkeyed(None).key, Plugin::unkeyed(None).key);
     assert_ne!(PluginKey::new("foo"), PluginKey::new("foo"));
 }
+
+#[test]
+fn multiple_steps_map_selection_from_last_explicit_position() {
+    let state = create(Some(doc!(p!("abc")).node), vec![]);
+    let mut tr = state.tr();
+    tr.insert_text("x", 1, 1)
+        .set_selection(Selection::cursor(3))
+        .insert_text("y", 1, 1)
+        .insert_text("z", 1, 1);
+    assert_eq!(tr.selection(), Selection::cursor(5));
+    assert_eq!(state.apply(&tr).selection, Selection::cursor(5));
+}
+
+#[test]
+fn multiple_append_hooks_receive_only_unseen_transactions() {
+    let first = Plugin::unkeyed(None).with_append_transaction(|transactions, old, new| {
+        let last = transactions.last()?;
+        if last.get_meta("second") == Some(&json!(true)) {
+            assert_eq!(old.doc, doc!(p!("x")).node);
+            assert_eq!(new.doc, doc!(p!("xy")).node);
+            let mut tr = new.tr();
+            tr.insert_text_at_selection("z");
+            return Some(tr);
+        }
+        None
+    });
+    let second = Plugin::unkeyed(None).with_append_transaction(|transactions, _, new| {
+        let last = transactions.last()?;
+        if last.get_meta("root") == Some(&json!(true)) {
+            let mut tr = new.tr();
+            tr.insert_text_at_selection("y").set_meta("second", json!(true));
+            return Some(tr);
+        }
+        None
+    });
+    let state = create(None, vec![first, second]);
+    let mut tr = state.tr();
+    let applied = state.apply_transaction(tr.insert_text_at_selection("x").set_meta("root", json!(true)));
+    assert_eq!(applied.state.doc, doc!(p!("xyz")).node);
+    assert_eq!(applied.transactions.len(), 3);
+}

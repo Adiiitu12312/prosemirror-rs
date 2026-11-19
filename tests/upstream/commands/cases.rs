@@ -1,7 +1,10 @@
 // Cases from the pinned upstream test/test-commands.ts.
 
+#[path = "../command_support.rs"]
 mod support;
-use support::verify_case;
+fn verify_case(index: usize) {
+    support::verify_case(include_str!("cases.json"), index);
+}
 
 #[test]
 fn joinbackward_can_join_paragraphs() {

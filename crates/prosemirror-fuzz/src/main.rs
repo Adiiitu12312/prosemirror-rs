@@ -43,7 +43,9 @@ fn main() {
                 match rust_result {
                     StepResult::Ok(rust_doc) => {
                         if !oracle_resp.success {
-                            panic_repro(i, &doc_json, &step_json, "Rust succeeded but JS Oracle failed");
+                            panic_repro(i, &doc_json, &step_json, &format!(
+                                "Rust succeeded but JS failed: {:?}", oracle_resp.error,
+                            ));
                         }
                         let rust_doc_json = serde_json::to_value(&rust_doc).unwrap();
                         let js_doc_json = oracle_resp.doc.unwrap();
@@ -58,15 +60,33 @@ fn main() {
 
                         // Also verify step map ranges
                         let rust_map = step.get_map();
-                        if let Some(js_map) = oracle_resp.step_map {
-                            if rust_map.ranges != js_map {
+                        if Some(&rust_map.ranges) != oracle_resp.step_map.as_ref() {
                                 panic_repro(
                                     i,
                                     &doc_json,
                                     &step_json,
-                                    &format!("StepMap mismatch!\nRust: {:?}\nJS:   {:?}", rust_map.ranges, js_map),
+                                    &format!("StepMap mismatch!\nRust: {:?}\nJS:   {:?}", rust_map.ranges, oracle_resp.step_map),
                                 );
-                            }
+                        }
+                        let positions: Vec<_> = (0..=doc.content().size())
+                            .flat_map(|pos| [-1, 1].map(|assoc| {
+                                let mapped = rust_map.map_result(pos, assoc);
+                                (mapped.pos, mapped.deleted(), mapped.deleted_before(), mapped.deleted_after(), mapped.deleted_across())
+                            }))
+                            .collect();
+                        if Some(positions) != oracle_resp.positions {
+                            panic_repro(i, &doc_json, &step_json, "StepMap position or deletion flag mismatch");
+                        }
+                        let inverse = step.invert(&doc);
+                        if Some(serde_json::to_value(&inverse).unwrap()) != oracle_resp.inverse {
+                            panic_repro(i, &doc_json, &step_json, "Inverse step JSON mismatch");
+                        }
+                        let undone = match inverse.apply(&rust_doc) {
+                            StepResult::Ok(doc) => Some(serde_json::to_value(doc).unwrap()),
+                            StepResult::Failed(_) => None,
+                        };
+                        if undone != oracle_resp.undone {
+                            panic_repro(i, &doc_json, &step_json, "Inverse step application mismatch");
                         }
                     }
                     StepResult::Failed(err) => {
@@ -82,7 +102,7 @@ fn main() {
                 }
             }
             Err(e) => {
-                eprintln!("Warning: could not contact oracle for step {i}: {e}");
+                panic_repro(i, &doc_json, &step_json, &format!("Oracle failed: {e}"));
             }
         }
 

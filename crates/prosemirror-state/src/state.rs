@@ -195,9 +195,16 @@ impl EditorState {
     }
 
     pub fn get_plugin_state(&self, name: &str) -> Option<&Value> {
-        self.plugin_states
-            .get(name)
-            .or_else(|| self.plugin_states.get(&format!("{name}$")))
+        self.plugin_states.get(name).or_else(|| {
+            self.plugins.iter().find_map(|plugin| {
+                let (label, suffix) = plugin.key.name.rsplit_once('$')?;
+                if label == name && suffix.bytes().all(|byte| byte.is_ascii_digit()) {
+                    plugin.get_state(self)
+                } else {
+                    None
+                }
+            })
+        })
     }
 
     pub fn to_json(&self) -> Value {

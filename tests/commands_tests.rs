@@ -106,14 +106,14 @@ fn test_toggle_mark_command() {
 fn test_chain_commands() {
     let doc = build_doc(|ctx| {
         ctx.wrap_block("doc", |inner| {
-            vec![p(vec![text("Chain test")])(inner)]
+            vec![p(vec![text("Old")])(inner), p(vec![text("Chain test")])(inner)]
         })
     }).node;
 
     let state = EditorState::create(EditorStateConfig {
         schema: test_schema().clone(),
         doc: Some(doc),
-        selection: Some(Selection::cursor(1)), // Empty selection
+        selection: Some(Selection::cursor(6)), // Empty selection before the second paragraph.
         stored_marks: None,
         plugins: Vec::new(),
     });
@@ -121,8 +121,8 @@ fn test_chain_commands() {
     // First command will return false (delete_selection needs non-empty selection)
     // Second command (join_backward) will handle it
     let chained = chain_commands(vec![
-        Box::new(|s, d| delete_selection(s, d)),
-        Box::new(|s, d| join_backward(s, d)),
+        Box::new(delete_selection),
+        Box::new(join_backward),
     ]);
 
     let mut executed = false;

@@ -44,9 +44,47 @@ impl HistoryItem {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(from = "BranchJson")]
 pub struct Branch {
     pub items: Vec<HistoryItem>,
     pub event_count: usize,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum BranchJson {
+    Grouped {
+        items: Vec<HistoryItem>,
+        event_count: usize,
+    },
+    Legacy(Vec<LegacyHistoryItem>),
+}
+
+#[derive(Deserialize)]
+struct LegacyHistoryItem {
+    step: Step,
+    inverted: Step,
+    selection: prosemirror_state::Selection,
+}
+
+impl From<BranchJson> for Branch {
+    fn from(branch: BranchJson) -> Self {
+        match branch {
+            BranchJson::Grouped { items, event_count } => Self { items, event_count },
+            BranchJson::Legacy(items) => Self {
+                event_count: items.len(),
+                items: items
+                    .into_iter()
+                    .map(|item| HistoryItem {
+                        map: item.step.get_map(),
+                        step: Some(item.inverted),
+                        selection: Some(item.selection.bookmark()),
+                        mirror_offset: None,
+                    })
+                    .collect(),
+            },
+        }
+    }
 }
 
 struct PoppedEvent {
@@ -287,6 +325,7 @@ impl Default for HistoryOptions {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
 pub struct HistoryState {
     pub done: Branch,
     pub undone: Branch,

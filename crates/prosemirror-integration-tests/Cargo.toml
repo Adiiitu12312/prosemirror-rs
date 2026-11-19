@@ -10,6 +10,7 @@ autolib = false
 prosemirror-commands.workspace = true
 prosemirror-history.workspace = true
 prosemirror-model.workspace = true
+prosemirror-schema-list.workspace = true
 prosemirror-state.workspace = true
 prosemirror-test-builder.workspace = true
 prosemirror-transform.workspace = true
@@ -39,3 +40,11 @@ path = "../../tests/transform_tests.rs"
 [[test]]
 name = "view"
 path = "../../tests/view_spike_tests.rs"
+
+[[test]]
+name = "upstream_commands"
+path = "../../tests/upstream/commands/cases.rs"
+
+[[test]]
+name = "upstream_schema_list"
+path = "../../tests/upstream/schema_list/cases.rs"

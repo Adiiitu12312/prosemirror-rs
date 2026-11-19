@@ -290,7 +290,8 @@ impl Transaction {
         if text.is_empty() {
             self.delete_selection()
         } else {
-            self.replace_selection_with(Node::new_text(text, Vec::new()), true)
+            let text = self.text_node(text, Vec::new());
+            self.replace_selection_with(text, true)
         }
     }
 
@@ -299,7 +300,8 @@ impl Transaction {
             return self.delete_range(from, to);
         }
         let marks = self.stored_marks.clone().unwrap_or_else(|| self.marks_for_range(from, to));
-        self.replace_range_with(from, to, Node::new_text(text, marks));
+        let text = self.text_node(text, marks);
+        self.replace_range_with(from, to, text);
         let selection = self.selection();
         if !selection.empty_in(self.doc()) {
             if let Ok(to) = self.doc().resolve(selection.to(self.doc())) {
@@ -343,6 +345,13 @@ impl Transaction {
 
     fn marks_at(&self, pos: usize) -> Vec<Mark> {
         self.doc().resolve(pos).map(|pos| pos.marks()).unwrap_or_default()
+    }
+
+    fn text_node(&self, text: &str, marks: Vec<Mark>) -> Node {
+        match self.doc().schema() {
+            Some(schema) => schema.text(text, Some(marks)),
+            None => Node::new_text(text, marks),
+        }
     }
 
     fn marks_for_range(&self, from: usize, to: usize) -> Vec<Mark> {

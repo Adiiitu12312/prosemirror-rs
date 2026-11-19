@@ -48,7 +48,10 @@ jobs:
         run: cargo check --workspace --all-targets
 
       - name: Run Test Suite
-        run: cargo test --workspace --all-targets --verbose
+        run: cargo test --workspace --all-targets --no-fail-fast
+
+      - name: Run Documentation Tests
+        run: cargo test --workspace --doc
 
       - name: Cargo Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings

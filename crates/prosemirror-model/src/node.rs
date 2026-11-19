@@ -700,7 +700,7 @@ impl PartialEq for Node {
 
 impl std::fmt::Debug for Node {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.inner.fmt(formatter)
+        std::fmt::Debug::fmt(&self.inner, formatter)
     }
 }
 

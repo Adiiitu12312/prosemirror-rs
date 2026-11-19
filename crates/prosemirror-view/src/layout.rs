@@ -1,4 +1,3 @@
-use prosemirror_model::Node;
 use prosemirror_state::EditorState;
 
 #[derive(Clone, Debug, PartialEq)]

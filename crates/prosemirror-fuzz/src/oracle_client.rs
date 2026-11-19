@@ -14,6 +14,9 @@ pub struct OracleResponse {
     pub success: bool,
     pub doc: Option<Value>,
     pub step_map: Option<Vec<usize>>,
+    pub positions: Option<Vec<(usize, bool, bool, bool, bool)>>,
+    pub inverse: Option<Value>,
+    pub undone: Option<Value>,
     pub error: Option<String>,
 }
 
