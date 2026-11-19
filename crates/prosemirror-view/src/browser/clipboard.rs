@@ -1,6 +1,6 @@
 //! Browser HTML and ClipboardEvent adapters for the Rust clipboard algorithms.
 
-use prosemirror_model::{DomNode, ResolvedPos, Slice};
+use prosemirror_model::{DomNode, DomParseOptions, DomParser, ResolvedPos, Slice};
 use serde_json::json;
 use wasm_bindgen::{JsCast, JsValue};
 use web_sys::{ClipboardEvent, DataTransfer, Document, HtmlElement, HtmlTemplateElement};
@@ -44,13 +44,13 @@ impl BrowserView {
         &self, text: &str, html: Option<&str>, plain: bool, context: &ResolvedPos,
     ) -> Result<Option<Slice>, JsValue> {
         let config = self.props();
+        let document = self.dom().owner_document().ok_or_else(|| error("No owner document"))?;
         let html = html.filter(|html| !html.is_empty());
         let as_text = !text.is_empty()
             && (plain || html.is_none() || context.parent().node_type().is_some_and(|kind| kind.spec.code));
         let dom = if let Some(html) = html.filter(|_| !as_text) {
             let html = config.providers().filter_map(|props| props.transform_pasted_html.as_ref())
                 .fold(html.to_owned(), |html, transform| transform(&html, self));
-            let document = self.dom().owner_document().ok_or_else(|| error("No owner document"))?;
             Some(parse_html(&document, &html)?)
         } else {
             None
@@ -63,12 +63,16 @@ impl BrowserView {
             config.some_prop(|props| props.clipboard_text_parser.as_ref()
                 .and_then(|parse| parse(text, context, plain, self)))
         };
+        let parse_slice = |parser: &DomParser, dom: &DomNode, options: DomParseOptions<'_>| {
+            super::dom::parse_clipboard_slice(&document, parser, dom, options)
+        };
         parse_from_clipboard(&config.state.schema, text, dom, plain, context, &ClipboardOptions {
             parser: config.some_prop(|props| props.clipboard_parser.as_deref())
                 .or_else(|| config.some_prop(|props| props.dom_parser.as_deref())),
             transform_pasted_text: Some(&transform_text),
             transform_pasted: Some(&transform_slice),
             text_parser: Some(&parse_text),
+            parse_slice: Some(&parse_slice),
             ..ClipboardOptions::default()
         }).map_err(error)
     }

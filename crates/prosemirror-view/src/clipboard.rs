@@ -10,6 +10,7 @@ type TextSerializer<'a> = &'a dyn Fn(&Slice) -> String;
 type TextParser<'a> = &'a dyn Fn(&str, &ResolvedPos, bool) -> Option<Slice>;
 type PasteText<'a> = &'a dyn Fn(&str, bool) -> String;
 type PasteSlice<'a> = &'a dyn Fn(Slice, bool) -> Slice;
+type ParseSlice<'a> = &'a dyn Fn(&DomParser, &DomNode, DomParseOptions<'_>) -> Result<Slice, ModelError>;
 
 #[derive(Default)]
 pub struct ClipboardOptions<'a> {
@@ -21,6 +22,7 @@ pub struct ClipboardOptions<'a> {
     pub transform_pasted_text: Option<PasteText<'a>>,
     pub transform_pasted_dom: Option<&'a dyn Fn(DomNode) -> DomNode>,
     pub transform_pasted: Option<PasteSlice<'a>>,
+    pub parse_slice: Option<ParseSlice<'a>>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -166,11 +168,15 @@ fn parse_dom(
             &default_parser
         }
     };
-    let slice = parser.parse_slice(root, DomParseOptions {
+    let parse_options = DomParseOptions {
         preserve_whitespace: (as_text || data.is_some()).then_some(Whitespace::Preserve),
         context: Some(context),
         ..DomParseOptions::default()
-    })?;
+    };
+    let slice = match options.parse_slice {
+        Some(parse_slice) => parse_slice(parser, root, parse_options)?,
+        None => parser.parse_slice(root, parse_options)?,
+    };
     Ok(if let Some(data) = data {
         add_context(schema, close_slice(schema, slice, data.start, data.end), &data.context)
     } else {

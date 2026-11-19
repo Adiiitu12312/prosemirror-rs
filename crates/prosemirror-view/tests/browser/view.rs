@@ -3,7 +3,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use prosemirror_model::Schema;
+use prosemirror_model::{DomParseRule, DomParser, Schema};
 use prosemirror_schema_basic::nodes;
 use prosemirror_state::{EditorState, EditorStateConfig, Plugin, Selection};
 use prosemirror_test_builder::{doc, hr, p, strong_text, BuilderContext};
@@ -200,6 +200,29 @@ fn routes_native_clipboard_events() {
     view.dom().dispatch_event(&paste).unwrap();
     assert!(paste.default_prevented());
     assert_eq!(view.state().doc, doc!(p!("one two")).node);
+}
+
+#[wasm_bindgen_test]
+fn uses_browser_tag_and_content_selectors_in_clipboard_and_live_dom() {
+    let fixture = doc!(p!("before <a>after"));
+    let state = state(fixture);
+    let mut rule = DomParseRule::tag("p > span[data-note^='live']:first-of-type");
+    rule.mark = Some("strong".into());
+    rule.content_element = Some(":scope > em:first-child".into());
+    let mut rules = DomParser::schema_rules(&state.schema);
+    rules.insert(0, rule);
+    let parser = Rc::new(DomParser::new(state.schema.clone(), rules));
+    let view = mount_state(state, BrowserViewProps {
+        dom_parser: Some(parser.clone()),
+        clipboard_parser: Some(parser),
+        ..BrowserViewProps::default()
+    });
+    assert!(view.paste_html("<p><span data-note='lively'><em>like</em><i>omit</i></span></p>", None).unwrap());
+    assert_eq!(view.state().doc, doc!(p!("before ", strong_text("like"), "after")).node);
+    let paragraph = view.dom().first_element_child().unwrap();
+    paragraph.set_inner_html("<span data-note='live-edit'><em>edit</em><i>omit</i></span>");
+    view.flush_dom_changes().unwrap();
+    assert_eq!(view.state().doc, doc!(p!(strong_text("edit"))).node);
 }
 
 #[wasm_bindgen_test]

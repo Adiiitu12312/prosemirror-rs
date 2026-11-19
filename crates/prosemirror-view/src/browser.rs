@@ -2,6 +2,7 @@
 
 mod capturekeys;
 mod clipboard;
+pub mod dom;
 mod domchange;
 mod domcoords;
 mod domobserver;

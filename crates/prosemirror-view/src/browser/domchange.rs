@@ -391,6 +391,7 @@ fn parse_between(
     };
     let schema = custom_parser.map_or(&state.schema, |parser| &parser.schema);
     let parser = DomParser::new(schema.clone(), rules);
+    let selectors = super::dom::BrowserSelectors(&parent);
     let doc = parser.parse(&dom, DomParseOptions {
         from: Some(range.from_offset),
         to: Some(to_offset),
@@ -400,6 +401,7 @@ fn parse_between(
         top_open: true,
         preserve_whitespace: Some(whitespace),
         find_positions: Some(&mut positions),
+        selectors: Some(&selectors),
         ..Default::default()
     }).map_err(model_error)?;
     let selection = positions.first().and_then(|pos| pos.pos)

@@ -14,7 +14,10 @@ pub mod table_map;
 mod to_dom;
 
 pub use error::ModelError;
-pub use from_dom::{DomParseOptions, DomParseRule, DomParser, DomPosition, DomRuleKind, ParseAttrs, Whitespace};
+pub use from_dom::{
+    DomParseOptions, DomParseRule, DomParser, DomPosition, DomRuleKind, DomSelectorResolver,
+    ParseAttrs, Whitespace,
+};
 pub use mark::Mark;
 pub use node::{slice_utf16, Fragment, Node, NodeInner};
 pub use replace::{replace, replace_at_pos};

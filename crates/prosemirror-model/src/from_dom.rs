@@ -109,7 +109,17 @@ pub struct DomParseOptions<'a> {
     pub top_match: Option<&'a ContentMatch>,
     pub context: Option<&'a ResolvedPos>,
     pub rule_from_node: Option<fn(&DomElement) -> Option<DomParseRule>>,
+    pub selectors: Option<&'a dyn DomSelectorResolver>,
     pub top_open: bool,
+}
+
+/// Resolve tag and content selectors against a host DOM when one is available.
+pub trait DomSelectorResolver {
+    /// Return `None` to use portable selector matching for this node.
+    fn matches(&self, element: &DomElement, path: &[usize], selector: &str) -> Option<bool>;
+
+    /// Return the child indices from the matched element to its content element.
+    fn content_path(&self, element: &DomElement, path: &[usize], selector: &str) -> Option<Vec<usize>>;
 }
 
 #[derive(Clone, Debug)]
@@ -395,7 +405,7 @@ impl<'a, 'b> ParseContext<'a, 'b> {
             self.options.rule_from_node.and_then(|rule| rule(element)).map(|rule| (None, rule))
         } else {
             None
-        }.or_else(|| self.match_tag(element, after));
+        }.or_else(|| self.match_tag(element, path, after));
 
         let rule = matched.as_ref().map(|(_, rule)| rule);
         if rule.map_or_else(|| is_ignored(&name), |rule| rule.ignore) {
@@ -445,10 +455,12 @@ impl<'a, 'b> ParseContext<'a, 'b> {
         Ok(())
     }
 
-    fn match_tag(&self, element: &DomElement, after: Option<usize>) -> Option<(Option<usize>, DomParseRule)> {
+    fn match_tag(&self, element: &DomElement, path: &[usize], after: Option<usize>) -> Option<(Option<usize>, DomParseRule)> {
         for (index, rule) in self.parser.rules.iter().enumerate().skip(after.map_or(0, |index| index + 1)) {
             let DomRuleKind::Tag { selector, namespace } = &rule.kind else { continue };
-            if !element.matches(selector) || namespace.as_ref().is_some_and(|namespace| Some(namespace) != element.namespace.as_ref())
+            let matches = self.options.selectors.and_then(|resolver| resolver.matches(element, path, selector))
+                .unwrap_or_else(|| element.matches(selector));
+            if !matches || namespace.as_ref().is_some_and(|namespace| Some(namespace) != element.namespace.as_ref())
                 || !self.rule_context(rule)
             {
                 continue;
@@ -534,7 +546,10 @@ impl<'a, 'b> ParseContext<'a, 'b> {
             }
         } else {
             let inner_path = rule.content_element_path.and_then(|f| f(element))
-                .or_else(|| rule.content_element.as_deref().and_then(|selector| element.find_path(selector)));
+                .or_else(|| rule.content_element.as_deref().and_then(|selector| {
+                    self.options.selectors.and_then(|resolver| resolver.content_path(element, path, selector))
+                        .or_else(|| element.find_path(selector))
+                }));
             let mut content_path = path.to_vec();
             let (content, name) = if let Some(inner_path) = inner_path.filter(|path| !path.is_empty()) {
                 let dom = take_at_path(&element.children, &inner_path)

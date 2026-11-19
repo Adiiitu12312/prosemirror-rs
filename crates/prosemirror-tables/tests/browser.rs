@@ -230,7 +230,12 @@ fn applies_plain_text_clipboard_content_to_each_selected_cell() {
     init.set_clipboard_data(Some(&data));
     init.set_cancelable(true);
     let paste = ClipboardEvent::new_with_event_init_dict("paste", &init).unwrap();
-    assert!(!view.dom().dispatch_event(&paste).unwrap());
+    // Firefox can strip the payload when constructing a synthetic clipboard event.
+    if paste.clipboard_data().and_then(|data| data.get_data("text/plain").ok()).as_deref() == Some("X") {
+        assert!(!view.dom().dispatch_event(&paste).unwrap());
+    } else {
+        assert!(view.paste_text("X", None).unwrap());
+    }
     let state = view.state();
     assert_eq!(state.doc.child(0).child(0).text_content(), "XX");
     assert_eq!(state.doc.child(0).child(1).text_content(), "cd");
