@@ -63,7 +63,7 @@ The sample opens a native document with headings, nested lists and task items, q
 - **Softbuffer** presents the same CPU buffer used by headless replay. The **png** crate saves that buffer as an offscreen snapshot without starting a window.
 - **Arboard** reads and writes system text clipboard data. The application retains the opaque rich slice inside the process while it owns the matching text, so rich copy and paste between independent processes uses the plain-text representation.
 
-The scripted binary accepts a JSON document, selection, and native event sequence through `--replay INPUT`. It prints the resulting state JSON and can produce an offscreen PNG with `--png OUTPUT`. Use `--snapshot PNG` to render the sample. CI runs the replay tests and publishes the screenshots for all three desktop platforms.
+The scripted binary accepts a JSON document, selection, and native event sequence through `--replay INPUT`. It prints the resulting state JSON and can produce an offscreen PNG with `--png OUTPUT`. Use `--snapshot PNG` to render the sample. CI compares decoded pixels against the checked-in sample, typing, selection, and block-drag images, then publishes screenshots from all three desktop platforms.
 
 The release-mode benchmark is invoked separately as `--bench core` and `--bench surface` so each host starts in a fresh process. It reports total time, mean time per input, and on Linux the process's current and peak resident memory as JSON lines. The core run includes state, history, and display-list construction. The surface run additionally includes layout and rasterization at 900 × 760. CI publishes measurements from the Linux runner.
 

@@ -12,6 +12,7 @@ use prosemirror_editor::{
     Point, PointerButton, PointerEvent, PointerInput, PositionAtCoords, Rect, TouchEvent,
 };
 use prosemirror_keymap::Platform;
+use prosemirror_model::Node;
 use prosemirror_state::Selection;
 use prosemirror_view::AccessibilityTreeUpdate;
 use softbuffer::{Context, Surface};
@@ -342,21 +343,7 @@ impl Desktop {
     }
 
     fn block_drop_hit(&self, point: Point) -> Option<PositionAtCoords> {
-        let surface = &self.editor.host().surface;
-        let hit = surface.pos_at_coords(point)?;
-        let doc = &self.editor.state().doc;
-        let resolved = doc.resolve(hit.pos).ok()?;
-        // Gutter drags reorder top-level blocks, including nested lists and tables.
-        let pos = if resolved.depth > 0 {
-            let start = resolved.before(1);
-            match surface.block_bounds(start).zip(doc.node_at(start)) {
-                Some((bounds, block)) if point.y >= bounds.center().y => start + block.node_size(),
-                _ => start,
-            }
-        } else {
-            hit.pos
-        };
-        Some(PositionAtCoords { pos, inside: None })
+        top_level_drop_hit(&self.editor.state().doc, &self.editor.host().surface, point)
     }
 
     fn primary_modifier(&self) -> bool {
@@ -565,6 +552,22 @@ fn point(position: PhysicalPosition<f64>) -> Point {
     Point { x: position.x, y: position.y }
 }
 
+fn top_level_drop_hit(doc: &Node, layout: &impl Layout, point: Point) -> Option<PositionAtCoords> {
+    let hit = layout.pos_at_coords(point)?;
+    let resolved = doc.resolve(hit.pos).ok()?;
+    // Gutter drags reorder top-level blocks, including nested lists and tables.
+    let pos = if resolved.depth > 0 {
+        let start = resolved.before(1);
+        match layout.block_bounds(start).zip(doc.node_at(start)) {
+            Some((bounds, block)) if point.y >= bounds.center().y => start + block.node_size(),
+            _ => start,
+        }
+    } else {
+        hit.pos
+    };
+    Some(PositionAtCoords { pos, inside: None })
+}
+
 fn distance_squared(a: Point, b: Point) -> f64 {
     (a.x - b.x).powi(2) + (a.y - b.y).powi(2)
 }
@@ -729,5 +732,32 @@ mod tests {
         assert_eq!(click_count(last, primary, Point::default(), now + CLICK_INTERVAL, 1.0), 1);
         assert_eq!(click_count(last, PointerButton::Middle, Point::default(), now, 1.0), 1);
         assert_eq!(click_count(last, primary, Point { x: 40.0, y: 0.0 }, now, 1.0), 1);
+    }
+
+    #[test]
+    fn gutter_drops_target_the_top_level_table_boundary() {
+        struct TableLayout(usize);
+
+        impl Layout for TableLayout {
+            fn coords_at_pos(&self, _: usize, _: i32) -> Option<Rect> { None }
+            fn pos_at_coords(&self, _: Point) -> Option<PositionAtCoords> {
+                Some(PositionAtCoords { pos: self.0 + 4, inside: Some(self.0 + 3) })
+            }
+            fn block_bounds(&self, pos: usize) -> Option<Rect> {
+                (pos == self.0).then_some(Rect { left: 24.0, right: 500.0, top: 100.0, bottom: 160.0 })
+            }
+        }
+
+        let doc = setup::sample();
+        let mut table = None;
+        doc.for_each(|node, pos, _| {
+            if node.type_name() == "table" { table = Some((pos, node.node_size())); }
+        });
+        let (start, size) = table.unwrap();
+        let layout = TableLayout(start);
+        let before = top_level_drop_hit(&doc, &layout, Point { x: 80.0, y: 110.0 }).unwrap();
+        let after = top_level_drop_hit(&doc, &layout, Point { x: 80.0, y: 150.0 }).unwrap();
+        assert_eq!(before, PositionAtCoords { pos: start, inside: None });
+        assert_eq!(after, PositionAtCoords { pos: start + size, inside: None });
     }
 }
