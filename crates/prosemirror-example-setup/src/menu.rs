@@ -119,7 +119,7 @@ fn mark_item(mark: &'static str, title: &str) -> MenuItem {
     })
 }
 
-fn mark_active(state: &EditorState, mark: &str) -> bool {
+pub(crate) fn mark_active(state: &EditorState, mark: &str) -> bool {
     if state.selection.empty_in(&state.doc) {
         state.stored_marks.clone().or_else(|| state.doc.resolve(state.selection.from()).ok().map(|pos| pos.marks()))
             .is_some_and(|marks| marks.iter().any(|value| value.type_name == mark))
@@ -138,17 +138,20 @@ fn link_item() -> MenuItem {
             if mark_active(state, "link") {
                 return toggle_mark("link", None)(state, Some(&mut |tr| host.dispatch(tr)));
             }
-            let prompt = MenuPrompt {
-                title: "Create a link".into(),
-                fields: vec![field("href", "Link target", "", true), field("title", "Title", "", false)],
-            };
-            if let Some(attrs) = host.prompt(&prompt).filter(|value| required_text(value, "href")) {
+            if let Some(attrs) = host.prompt(&link_prompt()).filter(|value| required_text(value, "href")) {
                 toggle_mark("link", Some(attrs))(state, Some(&mut |tr| host.dispatch(tr)));
                 host.focus_editor();
             }
             true
         })
     })
+}
+
+pub(crate) fn link_prompt() -> MenuPrompt {
+    MenuPrompt {
+        title: "Create a link".into(),
+        fields: vec![field("href", "Link target", "", true), field("title", "Title", "", false)],
+    }
 }
 
 fn image_item() -> MenuItem {
@@ -158,28 +161,7 @@ fn image_item() -> MenuItem {
         enable: Some(Arc::new(|state| can_insert(state, "image"))),
         ..MenuItemSpec::new(|state, host, _| {
             let Some(kind) = state.schema.node_type("image") else { return false };
-            let from = state.selection.from();
-            let to = state.selection.to(&state.doc);
-            let attrs = if matches!(state.selection, Selection::Node { .. }) {
-                state.doc.node_at(from).filter(|node| node.type_name() == "image").and_then(|node| node.attrs())
-            } else {
-                None
-            };
-            let attr = |name: &str| attrs.and_then(|attrs| attrs[name].as_str()).unwrap_or_default();
-            let description = if attrs.is_some() {
-                attr("alt").to_owned()
-            } else {
-                state.doc.text_between_with(from, to, Some(" "), None)
-            };
-            let prompt = MenuPrompt {
-                title: "Insert image".into(),
-                fields: vec![
-                    field("src", "Location", attr("src"), true),
-                    field("title", "Title", attr("title"), false),
-                    field("alt", "Description", &description, false),
-                ],
-            };
-            if let Some(attrs) = host.prompt(&prompt).filter(|value| required_text(value, "src")) {
+            if let Some(attrs) = host.prompt(&image_prompt(state)).filter(|value| required_text(value, "src")) {
                 if let Ok(Some(node)) = kind.create_and_fill(Some(attrs), None, None) {
                     let mut tr = state.tr();
                     tr.replace_selection_with(node, true);
@@ -190,6 +172,30 @@ fn image_item() -> MenuItem {
             true
         })
     })
+}
+
+pub(crate) fn image_prompt(state: &EditorState) -> MenuPrompt {
+    let from = state.selection.from();
+    let to = state.selection.to(&state.doc);
+    let attrs = if matches!(state.selection, Selection::Node { .. }) {
+        state.doc.node_at(from).filter(|node| node.type_name() == "image").and_then(|node| node.attrs())
+    } else {
+        None
+    };
+    let attr = |name: &str| attrs.and_then(|attrs| attrs[name].as_str()).unwrap_or_default();
+    let description = if attrs.is_some() {
+        attr("alt").to_owned()
+    } else {
+        state.doc.text_between_with(from, to, Some(" "), None)
+    };
+    MenuPrompt {
+        title: "Insert image".into(),
+        fields: vec![
+            field("src", "Location", attr("src"), true),
+            field("title", "Title", attr("title"), false),
+            field("alt", "Description", &description, false),
+        ],
+    }
 }
 
 fn horizontal_rule_item() -> MenuItem {

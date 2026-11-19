@@ -224,7 +224,7 @@ impl MenuBar {
         self.layout.update(self.options, geometry);
     }
 
-    fn available(&self, path: &[usize], state: &EditorState, focus: &MenuFocus) -> bool {
+    pub(crate) fn available(&self, path: &[usize], state: &EditorState, focus: &MenuFocus) -> bool {
         if !lookup(&self.content, path).is_some_and(|item| item.visible(state)) {
             return false;
         }
@@ -283,7 +283,7 @@ fn scope_of(path: &[usize]) -> &[usize] {
     if path.len() <= 2 { &[] } else { &path[..path.len() - 1] }
 }
 
-fn lookup<'a>(groups: &'a [Vec<MenuElement>], path: &[usize]) -> Option<&'a MenuElement> {
+pub(crate) fn lookup<'a>(groups: &'a [Vec<MenuElement>], path: &[usize]) -> Option<&'a MenuElement> {
     let (&group, rest) = path.split_first()?;
     let (&index, nested) = rest.split_first()?;
     let mut item = groups.get(group)?.get(index)?;

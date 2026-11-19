@@ -188,6 +188,14 @@ pub fn update_column_width(state: &EditorState, cell: usize, width: f64) -> Opti
 }
 
 pub fn handle_decorations(state: &EditorState, cell: Option<usize>) -> DecorationSet {
+    column_decorations(state, cell, |pos| pos as u64)
+}
+
+pub(crate) fn column_decorations(
+    state: &EditorState,
+    cell: Option<usize>,
+    widget_id: impl Fn(usize) -> u64,
+) -> DecorationSet {
     let Some(rect) = cell.and_then(|cell| TableRect::from_cells(&state.doc, cell, cell)) else {
         return DecorationSet::default();
     };
@@ -208,7 +216,7 @@ pub fn handle_decorations(state: &EditorState, cell: Option<usize>) -> Decoratio
         if dragging {
             decorations.push(Decoration::node(from, end, [("class".into(), "column-resize-dragging".into())].into(), Value::Null));
         }
-        decorations.push(Decoration::widget(end - 1, from as u64, json!({"class":"column-resize-handle"})));
+        decorations.push(Decoration::widget(end - 1, widget_id(from), json!({"class":"column-resize-handle"})));
     }
     DecorationSet::create(&state.doc, decorations)
 }

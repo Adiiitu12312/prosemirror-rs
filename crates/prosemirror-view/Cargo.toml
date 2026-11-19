@@ -19,8 +19,8 @@ js-sys = "0.3"
 web-sys = { version = "0.3", features = [
     "Attr", "ClipboardEvent", "ClipboardEventInit", "Comment", "CompositionEvent", "CssStyleDeclaration", "DataTransfer",
     "Document", "DocumentFragment", "DomRect", "DomRectList", "DomTokenList", "DragEvent",
-    "Element", "Event", "EventInit", "EventTarget", "FocusEvent", "FocusOptions", "HtmlElement",
-    "HtmlTemplateElement", "InputEvent", "KeyboardEvent", "KeyboardEventInit", "MouseEvent", "MutationObserver",
+    "Element", "Event", "EventInit", "EventTarget", "FileList", "FocusEvent", "FocusOptions", "HtmlElement",
+    "HtmlTemplateElement", "HtmlTextAreaElement", "InputEvent", "KeyboardEvent", "KeyboardEventInit", "MouseEvent", "MutationObserver",
     "MutationObserverInit", "MutationRecord", "NamedNodeMap", "Navigator", "Node", "NodeList",
     "Range", "Selection", "ShadowRoot", "Text", "VisualViewport", "Window", "console",
 ] }

@@ -18,5 +18,18 @@ prosemirror-schema-list.workspace = true
 prosemirror-state.workspace = true
 serde_json.workspace = true
 
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+prosemirror-view.workspace = true
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = [
+    "CssStyleDeclaration", "Document", "DomRect", "Element", "Event", "EventInit", "EventTarget", "HtmlElement",
+    "HtmlInputElement", "HtmlOptionElement", "HtmlSelectElement", "KeyboardEvent",
+    "KeyboardEventInit", "MouseEvent", "Node", "Window", "console",
+] }
+
 [dev-dependencies]
 prosemirror-test-builder.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"

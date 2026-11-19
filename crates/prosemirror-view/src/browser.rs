@@ -12,7 +12,7 @@ mod viewdesc;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::ops::{Deref, DerefMut};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use js_sys::Array;
 use prosemirror_model::{DomParser, DomSerializer, ResolvedPos, Slice};
@@ -31,7 +31,7 @@ use domcoords::ScrollOptions;
 pub use selection::SelectionOrigin;
 use selection::WriteSelectionOptions;
 pub use viewdesc::{
-    DocView, GetPos, MarkView, MarkViewFactory, NodeView, NodeViewFactory, ViewMutation, WidgetView,
+    render_dom, DocView, GetPos, MarkView, MarkViewFactory, NodeView, NodeViewFactory, ViewMutation, WidgetView,
     WidgetViewFactory,
 };
 
@@ -163,6 +163,15 @@ impl BrowserViewProps {
 #[derive(Clone)]
 pub struct BrowserView(Rc<RefCell<BrowserViewInner>>);
 
+#[derive(Clone)]
+pub struct WeakBrowserView(Weak<RefCell<BrowserViewInner>>);
+
+impl WeakBrowserView {
+    pub fn upgrade(&self) -> Option<BrowserView> {
+        self.0.upgrade().map(BrowserView)
+    }
+}
+
 struct BrowserViewInner {
     root: HtmlElement,
     state: EditorState,
@@ -238,6 +247,10 @@ impl BrowserView {
         Rc::ptr_eq(&self.0, &other.0)
     }
 
+    pub fn downgrade(&self) -> WeakBrowserView {
+        WeakBrowserView(Rc::downgrade(&self.0))
+    }
+
     pub fn editable(&self) -> bool {
         !self.is_destroyed() && self.props().editable()
     }
@@ -272,6 +285,7 @@ impl BrowserView {
             inner.props = props;
             std::mem::replace(&mut inner.state, state)
         };
+        input::update_dragged_node(self, &previous);
         self.render(true)?;
         self.ensure_listeners()?;
         if reset_views {

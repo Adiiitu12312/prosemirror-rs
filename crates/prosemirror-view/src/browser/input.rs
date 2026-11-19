@@ -2,11 +2,14 @@
 
 use js_sys::Date;
 use prosemirror_model::{Node as ModelNode, Slice};
-use prosemirror_state::Selection;
+use prosemirror_state::{EditorState, Selection};
 use prosemirror_transform::drop_point;
 use serde_json::json;
-use wasm_bindgen::{JsCast, JsValue};
-use web_sys::{ClipboardEvent, DragEvent, Event, KeyboardEvent, KeyboardEventInit, MouseEvent, Node};
+use wasm_bindgen::{closure::Closure, JsCast, JsValue};
+use web_sys::{
+    ClipboardEvent, DragEvent, Event, HtmlElement, HtmlTextAreaElement, KeyboardEvent,
+    KeyboardEventInit, MouseEvent, Node, Window,
+};
 
 use super::{capturekeys, clipboard::{clipboard_text, single_node}, domchange, error,
     BrowserView, ClickHandler, ClickOnHandler, PositionAtCoords, SelectionOrigin, ViewportPoint};
@@ -27,6 +30,7 @@ pub(super) struct InputState {
     mouse_down: Option<Click>,
     triple_selection: Option<Selection>,
     dragging: Option<Dragging>,
+    drag_generation: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -42,6 +46,12 @@ struct Click {
 struct Dragging {
     slice: Slice,
     node: Option<Selection>,
+}
+
+impl BrowserView {
+    pub fn dragging_slice(&self) -> Option<Slice> {
+        self.0.borrow().input.dragging.as_ref().map(|dragging| dragging.slice.clone())
+    }
 }
 
 pub(super) fn handle_event(view: &BrowserView, event: &Event) -> Result<(), JsValue> {
@@ -87,7 +97,18 @@ pub(super) fn dispatch_event(view: &BrowserView, event: &Event) -> Result<(), Js
         "paste" => with_event(event, |event: &ClipboardEvent| paste(view, event)),
         "dragstart" => with_event(event, |event: &DragEvent| drag_start(view, event)),
         "dragend" => {
-            view.0.borrow_mut().input.dragging = None;
+            if let Some(window) = browser_window(view) {
+                let generation = view.0.borrow().input.drag_generation;
+                let weak = view.downgrade();
+                after(&window, 50, move || {
+                    if let Some(view) = weak.upgrade() {
+                        let mut inner = view.0.borrow_mut();
+                        if inner.input.drag_generation == generation {
+                            inner.input.dragging = None;
+                        }
+                    }
+                })?;
+            }
             Ok(())
         }
         "dragover" | "dragenter" => {
@@ -386,12 +407,14 @@ fn copy(view: &BrowserView, event: &ClipboardEvent, cut: bool) -> Result<(), JsV
     if state.selection.empty() {
         return Ok(());
     }
-    if let Some(data) = event.clipboard_data() {
-        let content = view.serialize_for_clipboard(state.selection.content(&state.doc).map_err(error)?)?;
+    let content = view.serialize_for_clipboard(state.selection.content(&state.doc).map_err(error)?)?;
+    if let Some(data) = event.clipboard_data().filter(|_| !broken_clipboard(view)) {
         event.prevent_default();
         data.clear_data()?;
         data.set_data("text/html", &content.dom.inner_html())?;
         data.set_data("text/plain", &content.text)?;
+    } else {
+        capture_copy(view, &content.dom)?;
     }
     if cut {
         let mut tr = state.tr();
@@ -408,16 +431,92 @@ fn paste(view: &BrowserView, event: &ClipboardEvent) -> Result<(), JsValue> {
     {
         return Ok(());
     }
-    if let Some(data) = event.clipboard_data() {
-        let plain = {
-            let inner = view.0.borrow();
-            inner.input.shift_key && inner.input.last_key_code != 45
-        };
+    let plain = {
+        let inner = view.0.borrow();
+        inner.input.shift_key && inner.input.last_key_code != 45
+    };
+    if let Some(data) = event.clipboard_data().filter(|_| !broken_clipboard(view)) {
         if view.paste_content(&clipboard_text(&data)?, Some(&data.get_data("text/html")?), plain, Some(event))? {
             event.prevent_default();
+            return Ok(());
         }
     }
+    capture_paste(view, event, plain)
+}
+
+fn browser_window(view: &BrowserView) -> Option<Window> {
+    view.dom().owner_document()?.default_view()
+}
+
+fn broken_clipboard(view: &BrowserView) -> bool {
+    let agent = browser_window(view).and_then(|window| window.navigator().user_agent().ok()).unwrap_or_default();
+    agent.contains("MSIE ") || agent.contains("Trident/")
+        || ((agent.contains("iPhone") || agent.contains("iPad")) && major_version(&agent, "AppleWebKit/").is_some_and(|major| major < 604))
+}
+
+fn major_version(agent: &str, prefix: &str) -> Option<u32> {
+    agent.split_once(prefix)?.1.split('.').next()?.parse().ok()
+}
+
+fn after(window: &Window, delay: i32, run: impl FnOnce() + 'static) -> Result<(), JsValue> {
+    let callback = Closure::once_into_js(run);
+    window.set_timeout_with_callback_and_timeout_and_arguments_0(callback.unchecked_ref(), delay)?;
     Ok(())
+}
+
+fn capture_target(view: &BrowserView, tag: &str) -> Result<Option<HtmlElement>, JsValue> {
+    let root = view.dom();
+    let (Some(parent), Some(document)) = (root.parent_node(), root.owner_document()) else { return Ok(None) };
+    let target: HtmlElement = document.create_element(tag)?.dyn_into()?;
+    target.style().set_css_text("position: fixed; left: -10000px; top: 10px");
+    parent.append_child(&target)?;
+    Ok(Some(target))
+}
+
+fn capture_copy(view: &BrowserView, content: &HtmlElement) -> Result<(), JsValue> {
+    let (Some(window), Some(native)) = (browser_window(view), view.dom_selection()) else { return Ok(()) };
+    let document = content.owner_document().ok_or_else(|| error("No owner document"))?;
+    let Some(wrapper) = capture_target(view, "div")? else { return Ok(()) };
+    wrapper.append_child(content)?;
+    let range = document.create_range()?;
+    range.select_node_contents(content)?;
+    view.dom().blur()?;
+    native.remove_all_ranges()?;
+    native.add_range(&range)?;
+    let weak = view.downgrade();
+    after(&window, 50, move || {
+        wrapper.remove();
+        if let Some(view) = weak.upgrade() {
+            super::report_error(view.focus());
+        }
+    })
+}
+
+fn capture_paste(view: &BrowserView, event: &ClipboardEvent, plain: bool) -> Result<(), JsValue> {
+    let Some(window) = browser_window(view) else { return Ok(()) };
+    let state = view.state();
+    let pos = state.doc.resolve(state.selection.from()).map_err(error)?;
+    let use_textarea = plain || pos.parent().node_type().is_some_and(|kind| kind.spec.code);
+    let Some(target) = capture_target(view, if use_textarea { "textarea" } else { "div" })? else { return Ok(()) };
+    if !use_textarea {
+        target.set_content_editable("true");
+    }
+    target.focus()?;
+    let event = event.clone();
+    let weak = view.downgrade();
+    after(&window, 50, move || {
+        target.remove();
+        if let Some(view) = weak.upgrade().filter(|view| !view.is_destroyed()) {
+            let result = view.focus().and_then(|()| {
+                if let Some(input) = target.dyn_ref::<HtmlTextAreaElement>() {
+                    view.paste_content(&input.value(), None, plain, Some(&event))
+                } else {
+                    view.paste_content(&target.text_content().unwrap_or_default(), Some(&target.inner_html()), plain, Some(&event))
+                }
+            });
+            super::report_error(result.map(|_| ()));
+        }
+    })
 }
 
 fn drag_moves(view: &BrowserView, event: &DragEvent) -> bool {
@@ -454,12 +553,41 @@ fn drag_start(view: &BrowserView, event: &DragEvent) -> Result<(), JsValue> {
     };
     let slice = node.as_ref().unwrap_or(&state.selection).content(&state.doc).map_err(error)?;
     let content = view.serialize_for_clipboard(slice)?;
-    data.clear_data()?;
-    data.set_data("text/html", &content.dom.inner_html())?;
-    data.set_data("text/plain", &content.text)?;
+    let chrome = browser_window(view).and_then(|window| window.navigator().user_agent().ok())
+        .and_then(|agent| major_version(&agent, "Chrome/"));
+    if data.files().is_none_or(|files| files.length() == 0) || chrome.is_none_or(|chrome| chrome > 120) {
+        data.clear_data()?;
+    }
+    if broken_clipboard(view) {
+        data.set_data("Text", &content.dom.inner_html())?;
+    } else {
+        data.set_data("text/html", &content.dom.inner_html())?;
+        data.set_data("text/plain", &content.text)?;
+    }
     data.set_effect_allowed("copyMove");
-    view.0.borrow_mut().input.dragging = Some(Dragging { slice: content.slice, node });
+    let mut inner = view.0.borrow_mut();
+    inner.input.drag_generation = inner.input.drag_generation.wrapping_add(1);
+    inner.input.dragging = Some(Dragging { slice: content.slice, node });
     Ok(())
+}
+
+pub(super) fn update_dragged_node(view: &BrowserView, previous: &EditorState) {
+    let mut inner = view.0.borrow_mut();
+    let Some(Selection::Node { anchor }) = inner.input.dragging.as_ref().and_then(|dragging| dragging.node.as_ref()) else {
+        return;
+    };
+    let anchor = *anchor;
+    let Some(node) = previous.doc.node_at(anchor) else { return };
+    let next = &inner.state.doc;
+    let found = if next.node_at(anchor).is_some_and(|candidate| candidate.ptr_eq(node)) {
+        Some(anchor)
+    } else {
+        (anchor + next.content().size()).checked_sub(previous.doc.content().size())
+            .filter(|&pos| pos > 0 && next.node_at(pos).is_some_and(|candidate| candidate.ptr_eq(node)))
+    };
+    if let Some(dragging) = &mut inner.input.dragging {
+        dragging.node = found.map(Selection::node);
+    }
 }
 
 fn drop_event(view: &BrowserView, event: &DragEvent) -> Result<(), JsValue> {

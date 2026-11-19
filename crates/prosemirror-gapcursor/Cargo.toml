@@ -3,7 +3,7 @@ name = "prosemirror-gapcursor"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "ProseMirror gap cursor selections and native editor hooks"
+description = "ProseMirror gap cursor selections and editor hooks"
 
 [dependencies]
 prosemirror-keymap = { path = "../prosemirror-keymap" }
@@ -12,6 +12,14 @@ prosemirror-state.workspace = true
 prosemirror-view.workspace = true
 serde_json.workspace = true
 
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = ["Document", "Element", "InputEvent", "KeyboardEvent", "MouseEvent", "console"] }
+
 [dev-dependencies]
 prosemirror-schema-basic.workspace = true
 prosemirror-transform.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"
+web-sys = { version = "0.3", features = ["CssStyleDeclaration", "InputEventInit", "KeyboardEventInit", "MouseEventInit", "Window"] }

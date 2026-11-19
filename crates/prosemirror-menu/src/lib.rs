@@ -3,6 +3,9 @@
 //! The menu tracks command availability and control focus. The host owns
 //! widget rendering, native event propagation, and application of layout.
 
+#[cfg(target_arch = "wasm32")]
+pub mod browser;
+
 mod icons;
 mod menu;
 mod menubar;

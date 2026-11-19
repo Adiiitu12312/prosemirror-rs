@@ -3,13 +3,23 @@ name = "prosemirror-dropcursor"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "ProseMirror drop cursor for native editor hosts"
+description = "ProseMirror drop cursor for native and browser editor hosts"
 
 [dependencies]
 prosemirror-model.workspace = true
 prosemirror-transform.workspace = true
 prosemirror-view.workspace = true
 
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys = "0.3"
+prosemirror-state.workspace = true
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = ["CssStyleDeclaration", "Document", "DomRect", "DomTokenList", "DragEvent", "Element", "Event", "EventTarget", "HtmlElement", "MouseEvent", "Node", "Window", "console"] }
+
 [dev-dependencies]
 prosemirror-schema-basic.workspace = true
 serde_json.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"
+web-sys = { version = "0.3", features = ["DataTransfer", "DragEventInit"] }

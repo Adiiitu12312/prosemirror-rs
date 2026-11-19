@@ -183,8 +183,10 @@ fn routes_native_clipboard_events() {
     let cut = ClipboardEvent::new_with_event_init_dict("cut", &init).unwrap();
     view.dom().dispatch_event(&cut).unwrap();
     assert!(cut.default_prevented());
-    assert_eq!(data.get_data("text/plain").unwrap(), "two");
+    let copied = cut.clipboard_data().unwrap();
+    assert_eq!(copied.get_data("text/plain").unwrap(), "two");
     assert_eq!(view.state().doc, doc!(p!("one ")).node);
+    init.set_clipboard_data(Some(&copied));
     let paste = ClipboardEvent::new_with_event_init_dict("paste", &init).unwrap();
     view.dom().dispatch_event(&paste).unwrap();
     assert!(paste.default_prevented());

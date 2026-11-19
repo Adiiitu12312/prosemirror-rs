@@ -72,6 +72,13 @@ jobs:
   browser:
     name: Browser view (${{ matrix.browser }})
     runs-on: ubuntu-latest
+    env:
+      BROWSER_TEST_PACKAGES: >-
+        prosemirror-view
+        prosemirror-gapcursor
+        prosemirror-dropcursor
+        prosemirror-menu
+        prosemirror-example-setup
     strategy:
       fail-fast: false
       matrix:
@@ -88,7 +95,13 @@ jobs:
 
       - name: Check the browser view
         if: matrix.browser == 'chrome'
-        run: cargo clippy -p prosemirror-view --target wasm32-unknown-unknown --test browser -- -D warnings
+        run: |
+          read -r -a packages <<< "$BROWSER_TEST_PACKAGES"
+          package_args=()
+          for package in "${packages[@]}"; do
+            package_args+=(-p "$package")
+          done
+          cargo clippy "${package_args[@]}" --target wasm32-unknown-unknown --test browser -- -D warnings
 
       - name: Run the Rust browser tests
         if: ${{ !cancelled() }}
@@ -109,4 +122,9 @@ jobs:
               printf '%s\n' '{"moz:firefoxOptions":{"prefs":{"focusmanager.testmode":true}}}' > "$WASM_BINDGEN_TEST_WEBDRIVER_JSON"
               ;;
           esac
-          wasm-pack test --headless "--$TEST_BROWSER" crates/prosemirror-view --test browser
+          read -r -a packages <<< "$BROWSER_TEST_PACKAGES"
+          result=0
+          for package in "${packages[@]}"; do
+            wasm-pack test --headless "--$TEST_BROWSER" "crates/$package" --test browser || result=1
+          done
+          exit "$result"

@@ -1,6 +1,8 @@
 //! Keyboard binding and dispatch rules from prosemirror-keymap 1.2.3.
 
 mod key_name;
+#[cfg(target_arch = "wasm32")]
+pub mod browser;
 
 use std::collections::HashMap;
 use std::fmt;

@@ -1,5 +1,13 @@
-//! Native editor hooks from prosemirror-gapcursor 1.4.0.
-//! The host supplies textblock edges, hit testing, and a cursor decoration widget.
+//! Editor hooks from prosemirror-gapcursor 1.4.0.
+
+#[cfg(target_arch = "wasm32")]
+mod browser;
+
+#[cfg(target_arch = "wasm32")]
+pub use browser::browser_plugin;
+
+/// The standard ProseMirror gap cursor style.
+pub const CSS: &str = include_str!("../style/gapcursor.css");
 
 use std::sync::Arc;
 
