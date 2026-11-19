@@ -869,7 +869,7 @@ impl<'de> Deserialize<'de> for Node {
             Ok(Node::new_text(text, marks))
         } else {
             let content = match raw.content {
-                Some(nodes) => Fragment::from_children(nodes),
+                Some(nodes) => Fragment::from_nodes(nodes),
                 None => Fragment::empty(),
             };
             Ok(Node::new(raw.type_name, raw.attrs, content, marks))

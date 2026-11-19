@@ -355,7 +355,26 @@ impl<'a, 'b> ParseContext<'a, 'b> {
         if whitespace == Whitespace::Full || inline_context || text.chars().any(|ch| !html_space(ch)) {
             let value = match whitespace {
                 Whitespace::Full => text.replace("\r\n", "\n").replace('\r', "\n"),
-                Whitespace::Preserve => text.replace("\r\n", " ").replace(['\r', '\n'], " "),
+                Whitespace::Preserve => {
+                    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+                    if let Some(line_break) = self.parser.schema.linebreak_replacement()
+                        .filter(|_| normalized.contains('\n'))
+                    {
+                        let break_node = line_break.try_create(None, None, None)?;
+                        if self.nodes[self.open].find_wrapping(&break_node, &self.parser.schema).is_some() {
+                            for (index, line) in normalized.split('\n').enumerate() {
+                                if index > 0 {
+                                    self.insert_node(break_node.clone(), marks, true)?;
+                                }
+                                if !line.is_empty() {
+                                    self.insert_node(self.parser.schema.try_text(line, None)?, marks, line.chars().all(js_space))?;
+                                }
+                            }
+                            return self.find_in_text(path, text);
+                        }
+                    }
+                    normalized.replace('\n', " ")
+                }
                 Whitespace::Collapse => {
                     let mut value = collapse_whitespace(text);
                     if self.open == self.nodes.len() - 1 && value.starts_with(' ') {
@@ -371,7 +390,7 @@ impl<'a, 'b> ParseContext<'a, 'b> {
             };
             if !value.is_empty() {
                 let node = self.parser.schema.try_text(&value, None)?;
-                self.insert_node(node, marks)?;
+                self.insert_node(node, marks, value.chars().all(js_space))?;
             }
             self.find_in_text(path, text)
         } else {
@@ -412,7 +431,7 @@ impl<'a, 'b> ParseContext<'a, 'b> {
             self.find_inside(path)?;
             if name == "br" && !self.top_type().is_some_and(NodeType::inline_content) {
                 let text = self.parser.schema.try_text("-", None)?;
-                self.find_place(&text, marks)?;
+                self.find_place(&text, marks, true)?;
             }
             return Ok(());
         }
@@ -524,12 +543,12 @@ impl<'a, 'b> ParseContext<'a, 'b> {
             let kind = self.parser.schema.node_type(name).ok_or_else(|| ModelError::UnknownNodeType(name.to_owned()))?;
             let node = kind.try_create(rule.attrs.clone(), None, None)?;
             if kind.is_leaf() {
-                if !self.insert_node(node, &marks)? {
+                if !self.insert_node(node, &marks, element.name.eq_ignore_ascii_case("br"))? {
                     self.leaf_fallback(&element.name, path, &marks)?;
                 }
                 return self.find_inside(path);
             }
-            if let Some(inner) = self.find_place(&node, &marks)? {
+            if let Some(inner) = self.find_place(&node, &marks, false)? {
                 marks = self.enter_inner(name, rule.attrs.clone(), inner, true, rule.preserve_whitespace)?;
                 sync = Some(self.top().id);
             }
@@ -542,7 +561,7 @@ impl<'a, 'b> ParseContext<'a, 'b> {
         } else if let Some(get_content) = rule.get_content {
             self.find_inside(path)?;
             for node in get_content(element, &self.parser.schema).children {
-                self.insert_node(node, &marks)?;
+                self.insert_node(node, &marks, false)?;
             }
         } else {
             let inner_path = rule.content_element_path.and_then(|f| f(element))
@@ -584,13 +603,14 @@ impl<'a, 'b> ParseContext<'a, 'b> {
             .try_create(attrs)
     }
 
-    fn find_place(&mut self, node: &Node, marks: &[Mark]) -> Result<Option<Vec<Mark>>, ModelError> {
+    fn find_place(&mut self, node: &Node, marks: &[Mark], cautious: bool) -> Result<Option<Vec<Mark>>, ModelError> {
         let mut route: Option<(Vec<String>, usize)> = None;
+        let mut penalty = 0;
         for depth in (0..=self.open).rev() {
             let context = &mut self.nodes[depth];
             if let Some(wrap) = context.find_wrapping(node, &self.parser.schema) {
                 let direct = wrap.is_empty();
-                if route.as_ref().is_none_or(|(known, _)| known.len() > wrap.len()) {
+                if route.as_ref().is_none_or(|(known, _)| known.len() > wrap.len() + penalty) {
                     route = Some((wrap, context.id));
                     if direct {
                         break;
@@ -598,7 +618,10 @@ impl<'a, 'b> ParseContext<'a, 'b> {
                 }
             }
             if context.solid {
-                break;
+                if cautious {
+                    break;
+                }
+                penalty += 2;
             }
         }
         let Some((route, target)) = route else { return Ok(None) };
@@ -619,14 +642,14 @@ impl<'a, 'b> ParseContext<'a, 'b> {
         )
     }
 
-    fn insert_node(&mut self, node: Node, marks: &[Mark]) -> Result<bool, ModelError> {
+    fn insert_node(&mut self, node: Node, marks: &[Mark], cautious: bool) -> Result<bool, ModelError> {
         let mut known_marks = marks.to_vec();
         if node.is_inline() && self.needs_block && self.top().type_name.is_none() {
             if let Some(block) = self.textblock_from_context() {
                 known_marks = self.enter_inner(&block, None, known_marks, false, None)?;
             }
         }
-        let Some(mut inner) = self.find_place(&node, &known_marks)? else { return Ok(false) };
+        let Some(mut inner) = self.find_place(&node, &known_marks, cautious)? else { return Ok(false) };
         self.close_extra(false)?;
         inner.extend(node.marks().iter().cloned());
         let mut node_marks = Vec::new();
@@ -818,6 +841,11 @@ fn html_space(ch: char) -> bool {
     matches!(ch, ' ' | '\t' | '\r' | '\n' | '\u{000c}')
 }
 
+fn js_space(ch: char) -> bool {
+    html_space(ch) || matches!(ch, '\u{000b}' | '\u{00a0}' | '\u{1680}' | '\u{2000}'..='\u{200a}'
+        | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}' | '\u{3000}' | '\u{feff}')
+}
+
 fn collapse_whitespace(text: &str) -> String {
     let mut result = String::new();
     let mut was_space = false;
@@ -870,7 +898,7 @@ fn normalize_list(element: &DomElement) -> Cow<'_, DomElement> {
 
 fn is_block(tag: &str) -> bool {
     matches!(tag,
-        "address" | "article" | "aside" | "blockquote" | "canvas" | "dd" | "div" | "dl"
+        "address" | "article" | "aside" | "blockquote" | "body" | "canvas" | "dd" | "div" | "dl"
         | "fieldset" | "figcaption" | "figure" | "footer" | "form" | "h1" | "h2" | "h3" | "h4"
         | "h5" | "h6" | "header" | "hgroup" | "hr" | "li" | "noscript" | "ol" | "output"
         | "p" | "pre" | "section" | "table" | "tfoot" | "ul"

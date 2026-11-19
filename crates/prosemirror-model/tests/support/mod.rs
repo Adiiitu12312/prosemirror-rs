@@ -29,7 +29,7 @@ pub(crate) fn schema(content: &str) -> Schema {
         ("blockquote", block("block+")),
         ("horizontal_rule", NodeSpec { group: Some("block".to_owned()), ..NodeSpec::default() }),
         ("heading", NodeSpec {
-            attrs: [("level".into(), AttributeSpec::with_default(json!(1)))].into(),
+            attrs: [("level".into(), AttributeSpec::new(Some(json!(1)), Some("number")))].into(),
             ..block("inline*")
         }),
         ("code_block", NodeSpec { marks: Some(String::new()), ..block("text*") }),

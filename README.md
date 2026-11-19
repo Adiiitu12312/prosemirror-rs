@@ -9,7 +9,7 @@ A Rust port of [ProseMirror](https://prosemirror.net/). The workspace contains t
 
 | Module | Reference version | Rust implementation and tests |
 | --- | --- | --- |
-| `prosemirror-model` | 1.24.1 | Schema, content expressions, document tree, UTF-16 positions, marks, replacement, model DOM parsing and serialization |
+| `prosemirror-model` | 1.25.13 | Schema, content expressions, document tree, UTF-16 positions, marks, replacement, model DOM parsing and serialization |
 | `prosemirror-transform` | 1.10.2 | Built-in and registered custom steps, maps, slice fitting, structural transforms, and mark operations |
 | `prosemirror-state` | 1.4.3 | Selections, transactions, editor state, and plugin lifecycle |
 | `prosemirror-history` | 1.4.1 | Undo, redo, history grouping, and remapping |
@@ -20,19 +20,19 @@ A Rust port of [ProseMirror](https://prosemirror.net/). The workspace contains t
 | `prosemirror-collab` | 1.3.1 | Client step queue, remote changes, rebasing, and synchronization |
 | `prosemirror-keymap` | 1.2.3 | Key normalization and command dispatch |
 | `prosemirror-inputrules` | 1.5.0 | Text input rules, rule builders, and undo |
-| `prosemirror-gapcursor` | 1.4.0 | Gap selection, navigation, and native event hooks |
-| `prosemirror-dropcursor` | 1.8.2 | Drop target mapping, timing, and host-supplied geometry |
-| `prosemirror-tables` | 1.8.5 | Table schema, grid mapping, cell selection and editing, clipboard, and column resizing |
+| `prosemirror-gapcursor` | 1.4.0 | Gap selection, navigation, and browser cursor rendering |
+| `prosemirror-dropcursor` | 1.8.2 | Drop target mapping, timing, and browser overlays |
+| `prosemirror-tables` | 1.8.5 | Table schema, grid mapping, cell selection and editing, clipboard, and browser column resizing |
 | `prosemirror-changeset` | 2.4.0 | Changed ranges, span merging, token diffs, and change simplification |
 | `prosemirror-markdown` | 1.13.4 | Markdown schema, parsing, and serialization |
 | `prosemirror-search` | 1.1.0 | Query matching, search commands, replacement, and highlights |
-| `prosemirror-menu` | 1.3.0 | Native menus, dropdowns, focus navigation, and stock commands |
-| `prosemirror-example-setup` | 1.2.3 | Standard input rules, key bindings, menus, and native plugin configuration |
+| `prosemirror-menu` | 1.3.0 | Native and browser menus, dropdowns, focus navigation, and stock commands |
+| `prosemirror-example-setup` | 1.2.3 | Standard input rules, key bindings, menus, prompts, and plugin configuration |
 | `prosemirror-view` | 1.42.9 | Native and browser editor controllers, decoration trees, DOM reconciliation, and clipboard logic |
 
-The model, transform, state, history, commands, list, test-builder, collaboration, Markdown, search, changeset, and table suites carry cases from the corresponding upstream test files. The view suites include portable decoration and clipboard tests and browser DOM tests. The native view and menu take rendering, coordinates, and events from a host.
+The model, transform, state, history, commands, list, test-builder, collaboration, Markdown, search, changeset, and table suites carry cases from the corresponding upstream test files. All eleven ProseMirror View 1.42.9 test files have Rust ports, with portable decoration and clipboard tests and WebAssembly equivalents for the browser DOM cases.
 
-On `wasm32-unknown-unknown`, construct a `prosemirror_view::BrowserView` from a mount, an editor state, and view props. It renders into the browser DOM and uses the native selection, mutation observer, and input events. Include `prosemirror_view::browser::CSS` in the page for the standard editor styles.
+On `wasm32-unknown-unknown`, construct a `prosemirror_view::BrowserView` from a mount, an editor state, and view props. It renders into the browser DOM and uses the native selection, mutation observer, and input events. Browser DOM parsing uses native CSS selector matching. Include `prosemirror_view::browser::CSS` in the page for the standard editor styles. `prosemirror_example_setup::browser::example_setup` provides the standard schema-aware state plugins and browser props.
 
 Positions and internal text edits use UTF-16 code units. The model exposes `Node::text_utf16()` for exact access to isolated surrogate code units. Rust UTF-8, DOM text, and JSON APIs represent those isolated units with replacement characters.
 

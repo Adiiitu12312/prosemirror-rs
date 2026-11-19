@@ -17,7 +17,8 @@ pub(crate) fn find_diff_start(a: &Fragment, b: &Fragment, mut pos: usize) -> Opt
                     .zip(right.iter())
                     .take_while(|(a, b)| a == b)
                     .count();
-                return Some(pos + prefix);
+                let inside_pair = prefix < right.len() && splits_surrogate_pair(&left, prefix);
+                return Some(pos + prefix - usize::from(inside_pair));
             }
         }
         if left.content().size() > 0 || right.content().size() > 0 {
@@ -46,6 +47,8 @@ pub(crate) fn find_diff_end(
                     .zip(right.iter().rev())
                     .take_while(|(a, b)| a == b)
                     .count();
+                let inside_pair = suffix < right.len() && splits_surrogate_pair(&left, left.len() - suffix);
+                let suffix = suffix - usize::from(inside_pair);
                 return Some(DiffEnd { a: pos_a - suffix, b: pos_b - suffix });
             }
         }
@@ -58,4 +61,8 @@ pub(crate) fn find_diff_end(
         pos_b -= right.node_size();
     }
     (a.child_count() != b.child_count()).then_some(DiffEnd { a: pos_a, b: pos_b })
+}
+
+fn splits_surrogate_pair(text: &[u16], at: usize) -> bool {
+    at > 0 && at < text.len() && (0xd800..0xdc00).contains(&text[at - 1]) && (0xdc00..0xe000).contains(&text[at])
 }

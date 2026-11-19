@@ -58,6 +58,11 @@ impl EditorState {
                 .create_and_fill(None, None, None)?
                 .ok_or_else(|| ModelError::Serialization("Cannot create default document".into()))?,
         };
+        if let Some(Selection::Custom(selection)) = &config.selection {
+            if !selection.doc().ptr_eq(&doc) {
+                return Err(ModelError::Serialization("Selection must point at the current document".into()));
+            }
+        }
         let schema = doc.schema().cloned().unwrap_or_else(|| config.schema.clone());
         let mut state = Self {
             selection: config.selection.clone().unwrap_or_else(|| Selection::at_start(&doc)),

@@ -1,6 +1,15 @@
-//! Cases from prosemirror-model 1.24.1 test/test-mark.ts.
+//! Cases from prosemirror-model 1.25.13 test/test-mark.ts.
 
 mod support;
+
+use serde_json::json;
+
+#[test]
+fn checks_attributes_on_mark_creation() {
+    let schema = support::schema("block+");
+    let error = schema.mark_type("link").unwrap().try_create(Some(json!({"href":55}))).unwrap_err();
+    assert!(error.to_string().contains("Expected value of type string"));
+}
 
 support::cases! {
     "mark";

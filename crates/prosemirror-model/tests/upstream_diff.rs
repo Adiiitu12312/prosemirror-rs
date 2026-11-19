@@ -1,6 +1,9 @@
-//! Cases from prosemirror-model 1.24.1 test/test-diff.ts.
+//! Cases from prosemirror-model 1.25.13 test/test-diff.ts.
 
 mod support;
+
+use prosemirror_model::{DiffEnd, Node};
+use serde_json::json;
 
 support::cases! {
     "diff";
@@ -22,4 +25,24 @@ support::cases! {
     finddiffend_notices_different_nodes => 15,
     finddiffend_notices_a_difference_at_the_end => 16,
     finddiffend_handles_a_similar_start => 17,
+}
+
+fn one_character(text: &str) -> Node {
+    support::schema("block+").node_from_json(&json!({
+        "type":"doc", "content":[{"type":"paragraph", "content":[{"type":"text", "text":text}]}]
+    })).unwrap()
+}
+
+#[test]
+fn finddiffstart_does_not_start_in_the_middle_of_a_surrogate_pair() {
+    let left = one_character("𝛿");
+    let right = one_character("𝛾");
+    assert_eq!(left.content().find_diff_start(right.content()), Some(1));
+}
+
+#[test]
+fn finddiffend_does_not_end_in_the_middle_of_a_surrogate_pair() {
+    let left = one_character("𝋾");
+    let right = one_character("𝛾");
+    assert_eq!(left.content().find_diff_end(right.content()), Some(DiffEnd { a: 3, b: 3 }));
 }

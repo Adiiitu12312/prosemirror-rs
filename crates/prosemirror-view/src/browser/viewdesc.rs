@@ -1634,6 +1634,14 @@ pub fn render_dom(document: &Document, dom: &ModelDom) -> Result<Node, JsValue> 
             for attr in &model.attributes {
                 if let Some(namespace) = attr.namespace.as_deref() {
                     element.set_attribute_ns(Some(namespace), &attr.name, &attr.value)?;
+                } else if attr.name == "style" {
+                    let style = js_sys::Reflect::get(element.as_ref(), &JsValue::from_str("style"))?
+                        .dyn_into::<web_sys::CssStyleDeclaration>();
+                    if let Ok(style) = style {
+                        style.set_css_text(&attr.value);
+                    } else {
+                        element.set_attribute(&attr.name, &attr.value)?;
+                    }
                 } else {
                     element.set_attribute(&attr.name, &attr.value)?;
                 }

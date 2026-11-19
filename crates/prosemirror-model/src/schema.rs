@@ -164,11 +164,17 @@ impl NodeType {
         content: Option<Fragment>,
         marks: Option<Vec<Mark>>,
     ) -> Result<Node, ModelError> {
+        let schema = self.schema.upgrade().map(Schema::from_inner);
+        let attrs = compute_attrs(&self.spec.attrs, attrs.as_ref(), &self.name)?;
+        self.create_with_attrs(schema, attrs, content.unwrap_or_default(), marks)
+    }
+
+    fn create_with_attrs(
+        &self, schema: Option<Schema>, attrs: Option<Value>, content: Fragment, marks: Option<Vec<Mark>>,
+    ) -> Result<Node, ModelError> {
         if self.is_text() {
             return Err(ModelError::InvalidContent(self.name.clone()));
         }
-        let schema = self.schema.upgrade().map(Schema::from_inner);
-        let attrs = compute_attrs(&self.spec.attrs, attrs.as_ref(), &self.name)?;
         let marks = marks.unwrap_or_default();
         let marks = if let Some(schema) = schema.as_ref() {
             schema.bind_marks(marks)?
@@ -178,7 +184,7 @@ impl NodeType {
         Ok(Node::new_in_schema(
             self.name.clone(),
             attrs,
-            content.unwrap_or_default(),
+            content,
             marks,
             schema,
         ))
@@ -214,6 +220,7 @@ impl NodeType {
         let Some(schema) = self.schema.upgrade().map(Schema::from_inner) else {
             return self.try_create(attrs, content, marks).map(Some);
         };
+        let attrs = compute_attrs(&self.spec.attrs, attrs.as_ref(), &self.name)?;
         if generating.contains(&self.name) {
             return Ok(None);
         }
@@ -233,7 +240,7 @@ impl NodeType {
             Some(content.append(&suffix))
         })();
         generating.pop();
-        filled.map(|fragment| self.try_create(attrs, Some(fragment), marks)).transpose()
+        filled.map(|fragment| self.create_with_attrs(Some(schema), attrs, fragment, marks)).transpose()
     }
 
     pub fn content_match(&self) -> &ContentMatch {
@@ -533,18 +540,14 @@ impl Schema {
         }
         let node_type = self.require_node_type(name)?;
         let content = self.fragment_from_json(repr.get("content"))?;
-        let node = node_type.try_create(repr.get("attrs").cloned(), Some(content), Some(marks))?;
-        check_attrs(&node_type.spec.attrs, node.attrs(), name)?;
-        Ok(node)
+        node_type.try_create(repr.get("attrs").cloned(), Some(content), Some(marks))
     }
 
     pub fn mark_from_json(&self, value: &Value) -> Result<Mark, ModelError> {
         let repr = value.as_object().ok_or_else(|| ModelError::Serialization("Invalid input for Mark.fromJSON".to_owned()))?;
         let name = json_type(repr, "mark")?;
         let mark_type = self.mark_type(name).ok_or_else(|| ModelError::UnknownMarkType(name.to_owned()))?;
-        let mark = mark_type.try_create(repr.get("attrs").cloned())?;
-        mark_type.check_attrs(mark.attrs.as_ref())?;
-        Ok(mark)
+        mark_type.try_create(repr.get("attrs").cloned())
     }
 
     pub fn slice_from_json(&self, value: &Value) -> Result<Slice, ModelError> {
@@ -571,7 +574,7 @@ impl Schema {
         };
         let children = value.as_array().ok_or_else(|| ModelError::Serialization("Invalid input for Fragment.fromJSON".to_owned()))?;
         let children = children.iter().map(|child| self.node_from_json(child)).collect::<Result<_, _>>()?;
-        Ok(Fragment::from_children(children))
+        Ok(Fragment::from_nodes(children))
     }
 
     pub(crate) fn bind_marks(&self, mut marks: Vec<Mark>) -> Result<Vec<Mark>, ModelError> {
@@ -625,8 +628,14 @@ fn compute_attrs(
     }
     let mut attrs = Map::new();
     for (attribute, spec) in specs {
-        let value = provided.and_then(|values| values.get(attribute)).or(spec.default.as_ref())
-            .ok_or_else(|| ModelError::InvalidAttributes(format!("No value supplied for attribute {attribute} on type {name}")))?;
+        let value = if let Some(value) = provided.and_then(|values| values.get(attribute)) {
+            validate_attr(spec, Some(value), attribute, name)?;
+            value
+        } else {
+            spec.default.as_ref().ok_or_else(|| {
+                ModelError::InvalidAttributes(format!("No value supplied for attribute {attribute} on type {name}"))
+            })?
+        };
         attrs.insert(attribute.clone(), value.clone());
     }
     Ok(Some(Value::Object(attrs)))
@@ -637,37 +646,43 @@ pub(crate) fn check_attrs(
     attrs: Option<&Value>,
     name: &str,
 ) -> Result<(), ModelError> {
-    for (attribute, spec) in specs {
-        if spec.default.is_none() && attrs.and_then(|values| values.get(attribute)).is_none() {
-            return Err(ModelError::InvalidAttributes(format!(
-                "No value supplied for attribute {attribute} on type {name}"
-            )));
-        }
-        if let Some(allowed) = spec.validate.as_deref() {
-            let kind = match attrs.and_then(|values| values.get(attribute)) {
-                Some(Value::Null) => "null",
-                Some(Value::Bool(_)) => "boolean",
-                Some(Value::Number(_)) => "number",
-                Some(Value::String(_)) => "string",
-                Some(Value::Object(_) | Value::Array(_)) => "object",
-                None => "undefined",
-            };
-            if !allowed.split('|').any(|item| item == kind) {
-                return Err(ModelError::InvalidAttributes(format!(
-                    "Expected value of type {allowed} for attribute {attribute} on type {name}, got {kind}"
-                )));
-            }
-        }
-        if let Some(validate) = spec.validate_with {
-            if !attrs.and_then(|values| values.get(attribute)).is_some_and(validate) {
-                return Err(ModelError::InvalidAttributes(format!("Invalid value for attribute {attribute} on type {name}")));
-            }
-        }
-    }
     if let Some(Value::Object(attrs)) = attrs {
         if let Some(attribute) = attrs.keys().find(|attribute| !specs.contains_key(*attribute)) {
             return Err(ModelError::InvalidAttributes(format!("Unsupported attribute {attribute} on type {name}")));
         }
+    }
+    for (attribute, spec) in specs {
+        let value = attrs.and_then(|attrs| attrs.get(attribute));
+        if spec.default.is_none() && value.is_none() {
+            return Err(ModelError::InvalidAttributes(format!(
+                "No value supplied for attribute {attribute} on type {name}"
+            )));
+        }
+        validate_attr(spec, value, attribute, name)?;
+    }
+    Ok(())
+}
+
+fn validate_attr(
+    spec: &AttributeSpec, value: Option<&Value>, attribute: &str, name: &str,
+) -> Result<(), ModelError> {
+    if let Some(allowed) = spec.validate.as_deref() {
+        let kind = match value {
+            Some(Value::Null) => "null",
+            Some(Value::Bool(_)) => "boolean",
+            Some(Value::Number(_)) => "number",
+            Some(Value::String(_)) => "string",
+            Some(Value::Object(_) | Value::Array(_)) => "object",
+            None => "undefined",
+        };
+        if !allowed.split('|').any(|item| item == kind) {
+            return Err(ModelError::InvalidAttributes(format!(
+                "Expected value of type {allowed} for attribute {attribute} on type {name}, got {kind}"
+            )));
+        }
+    }
+    if spec.validate_with.is_some_and(|validate| !value.is_some_and(validate)) {
+        return Err(ModelError::InvalidAttributes(format!("Invalid value for attribute {attribute} on type {name}")));
     }
     Ok(())
 }

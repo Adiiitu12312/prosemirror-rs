@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{Fragment, ModelError};
+use crate::{Fragment, ModelError, Node};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Slice {
@@ -48,8 +48,10 @@ impl Slice {
     }
 
     pub fn insert_at(&self, pos: usize, fragment: &Fragment) -> Option<Self> {
-        insert_into(&self.content, pos.checked_add(self.open_start)?, fragment)
-            .map(|content| Self::new(content, self.open_start, self.open_end))
+        insert_into(
+            &self.content, pos.checked_add(self.open_start)?, fragment,
+            self.open_start.saturating_add(1), self.open_end.saturating_add(1), None,
+        ).map(|content| Self::new(content, self.open_start, self.open_end))
     }
 
     pub fn remove_between(&self, from: usize, to: usize) -> Result<Self, ModelError> {
@@ -61,17 +63,25 @@ impl Slice {
     }
 }
 
-fn insert_into(content: &Fragment, pos: usize, insert: &Fragment) -> Option<Fragment> {
+fn insert_into(
+    content: &Fragment, pos: usize, insert: &Fragment, open_start: usize, open_end: usize,
+    parent: Option<&Node>,
+) -> Option<Fragment> {
     if pos > content.size() {
         return None;
     }
     let (index, offset) = content.find_index(pos);
     let child = content.maybe_child(index);
-    if offset == pos || child.is_some_and(crate::Node::is_text) {
+    if offset == pos || child.is_some_and(Node::is_text) {
+        if open_start == 0 && open_end == 0 && parent.is_some_and(|parent| !parent.can_replace(index, index, insert)) {
+            return None;
+        }
         return Some(content.cut(0, pos).append(insert).append(&content.cut(pos, content.size())));
     }
     let child = child?;
-    let inner = insert_into(child.content(), pos - offset - 1, insert)?;
+    let start = if index == 0 { open_start.saturating_sub(1) } else { 0 };
+    let end = if index + 1 == content.child_count() { open_end.saturating_sub(1) } else { 0 };
+    let inner = insert_into(child.content(), pos - offset - 1, insert, start, end, Some(child))?;
     Some(content.replace_child(index, child.copy(Some(inner))))
 }
 
@@ -164,6 +174,6 @@ impl<'de> Deserialize<'de> for Fragment {
         D: serde::Deserializer<'de>,
     {
         let children = Option::<Vec<crate::Node>>::deserialize(deserializer)?.unwrap_or_default();
-        Ok(Fragment::from_children(children))
+        Ok(Fragment::from_nodes(children))
     }
 }

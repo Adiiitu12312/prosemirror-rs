@@ -219,6 +219,7 @@ fn uses_browser_tag_and_content_selectors_in_clipboard_and_live_dom() {
     });
     assert!(view.paste_html("<p><span data-note='lively'><em>like</em><i>omit</i></span></p>", None).unwrap());
     assert_eq!(view.state().doc, doc!(p!("before ", strong_text("like"), "after")).node);
+    view.update_state(crate::support::state(doc!(p!("ed<a>it")))).unwrap();
     let paragraph = view.dom().first_element_child().unwrap();
     paragraph.set_inner_html("<span data-note='live-edit'><em>edit</em><i>omit</i></span>");
     view.flush_dom_changes().unwrap();

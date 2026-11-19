@@ -110,18 +110,19 @@ impl DomSerializer {
     }
 
     pub fn serialize_mark(&self, mark: &Mark, inline: bool) -> Result<Option<RenderedDom>, ModelError> {
-        self.marks.get(&mark.type_name).map(|serialize| Self::render_spec(serialize(mark, inline))).transpose()
+        self.marks.get(&mark.type_name)
+            .map(|serialize| Self::render_element_spec(serialize(mark, inline), None))
+            .transpose()
     }
 
     fn serialize_node_inner(&self, node: &Node) -> Result<DomNode, ModelError> {
-        let spec = if let Some(serialize) = self.nodes.get(node.type_name()) {
-            serialize(node)
-        } else if let Some(text) = node.text() {
-            DomOutputSpec::Text(text.to_owned())
-        } else {
-            return Err(ModelError::Dom(format!("Missing DOM serializer for {}", node.type_name())));
-        };
-        let mut rendered = Self::render_spec(spec)?;
+        if let Some(text) = node.text() {
+            return Ok(DomNode::Text(text.to_owned()));
+        }
+        let serialize = self.nodes.get(node.type_name()).ok_or_else(|| {
+            ModelError::Dom(format!("Missing DOM serializer for {}", node.type_name()))
+        })?;
+        let mut rendered = Self::render_element_spec(serialize(node), None)?;
         if let Some(path) = rendered.content_path {
             if node.is_leaf() {
                 return Err(ModelError::Dom("Content hole not allowed in a leaf node spec".to_owned()));
@@ -140,9 +141,21 @@ impl DomSerializer {
         spec: DomOutputSpec,
         inherited_namespace: Option<&str>,
     ) -> Result<RenderedDom, ModelError> {
+        if let DomOutputSpec::Text(value) = spec {
+            return Ok(RenderedDom { dom: DomNode::Text(value), content_path: None });
+        }
+        Self::render_element_spec(spec, inherited_namespace)
+    }
+
+    fn render_element_spec(
+        spec: DomOutputSpec,
+        inherited_namespace: Option<&str>,
+    ) -> Result<RenderedDom, ModelError> {
         match spec {
-            DomOutputSpec::Text(value) => Ok(RenderedDom { dom: DomNode::Text(value), content_path: None }),
-            DomOutputSpec::Existing(rendered) => Ok(rendered),
+            DomOutputSpec::Existing(rendered) if matches!(rendered.dom, DomNode::Element(_)) => Ok(rendered),
+            DomOutputSpec::Text(_) | DomOutputSpec::Existing(_) => {
+                Err(ModelError::Dom("A DOM output specification must describe an element".to_owned()))
+            }
             DomOutputSpec::Hole => Err(ModelError::Dom("Content hole requires a parent element".to_owned())),
             DomOutputSpec::Element { name, namespace, attributes, children } => {
                 let (name, namespace) = if let Some((ns, tag)) = name.split_once(' ') {
@@ -156,10 +169,16 @@ impl DomSerializer {
                     content_path = Some(Vec::new());
                 } else {
                     for (index, child) in children.into_iter().enumerate() {
-                        if child == DomOutputSpec::Hole {
-                            return Err(ModelError::Dom("Content hole must be the only child of its parent node".to_owned()));
-                        }
-                        let rendered = Self::render_spec_with_namespace(child, element.namespace.as_deref())?;
+                        let rendered = match child {
+                            DomOutputSpec::Hole => return Err(ModelError::Dom(
+                                "Content hole must be the only child of its parent node".to_owned(),
+                            )),
+                            DomOutputSpec::Text(value) => {
+                                element.children.push(DomNode::Text(value));
+                                continue;
+                            }
+                            child => Self::render_element_spec(child, element.namespace.as_deref())?,
+                        };
                         if let Some(inner_path) = rendered.content_path {
                             if content_path.is_some() {
                                 return Err(ModelError::Dom("Multiple content holes".to_owned()));

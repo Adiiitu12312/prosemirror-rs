@@ -2,6 +2,8 @@
 
 mod support;
 
+use prosemirror_model::{Fragment, Slice};
+
 support::cases! {
     "slice";
     slice_can_cut_half_a_paragraph => 0,
@@ -24,4 +26,21 @@ support::cases! {
     slice_can_cut_across_different_depths => 17,
     slice_can_cut_between_deeply_nested_nodes => 18,
     slice_can_include_parents => 19,
+}
+
+#[test]
+fn validates_insertion_in_closed_nodes_of_an_open_slice() {
+    let schema = support::schema("block+");
+    let paragraph = |text| schema.node("paragraph", None, Some(Fragment::from_nodes(vec![schema.text(text, None)])), None)
+        .unwrap();
+    let content = Fragment::from_nodes(vec![paragraph("a"), paragraph("b"), paragraph("c")]);
+    let rule = Fragment::from_nodes(vec![schema.node("horizontal_rule", None, None, None).unwrap()]);
+
+    let closed = Slice::new(content.clone(), 0, 0);
+    assert!(closed.insert_at(1, &rule).is_none());
+
+    let open = Slice::new(content, 1, 1);
+    assert!(open.insert_at(0, &rule).is_some());
+    assert!(open.insert_at(3, &rule).is_none());
+    assert!(open.insert_at(6, &rule).is_some());
 }

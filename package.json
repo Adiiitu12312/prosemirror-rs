@@ -15,12 +15,13 @@
   "dependencies": {
     "prosemirror-commands": "1.6.2",
     "prosemirror-history": "1.4.1",
-    "prosemirror-model": "1.24.1",
+    "prosemirror-model": "1.25.13",
     "prosemirror-schema-basic": "1.2.3",
     "prosemirror-schema-list": "1.4.1",
     "prosemirror-state": "1.4.3",
     "prosemirror-test-builder": "1.1.1",
-    "prosemirror-transform": "1.10.2"
+    "prosemirror-transform": "1.10.2",
+    "prosemirror-view": "1.42.9"
   },
   "devDependencies": {
     "@types/node": "^22.8.0"

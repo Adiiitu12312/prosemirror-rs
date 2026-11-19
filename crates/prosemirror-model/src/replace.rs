@@ -53,10 +53,12 @@ fn replace_outer(from: &ResolvedPos, to: &ResolvedPos, slice: &Slice, depth: usi
 }
 
 fn close(node: &Node, content: Fragment) -> Result<Node, ModelError> {
-    if let Some(node_type) = node.node_type() {
-        node_type.check_content(&content)?;
-    } else if !node.can_replace(0, node.child_count(), &content) {
-        return Err(ModelError::InvalidContent(node.type_name().to_string()));
+    let valid = node.node_type().map_or_else(
+        || node.can_replace(0, node.child_count(), &content),
+        |node_type| node_type.valid_content(&content),
+    );
+    if !valid {
+        return Err(ModelError::ReplaceError(format!("Invalid content for node {}", node.type_name())));
     }
     Ok(node.copy(Some(content)))
 }

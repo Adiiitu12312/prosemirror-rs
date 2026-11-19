@@ -207,11 +207,36 @@ fn check_notices_incorrect_mark_sets() {
 #[test]
 fn check_notices_wrong_attribute_types() {
     let schema = support::schema("block+");
-    let image = schema.node_type("image").unwrap().create(Some(json!({"src":true})), None, None);
+    let image = schema.node_type("image").unwrap().create(Some(json!({"src":"img.png"})), None, None)
+        .with_attrs(Some(json!({"src":true})));
     assert!(image.check().unwrap_err().to_string()
         .contains("Expected value of type string for attribute src on type image, got boolean"));
 }
 
+#[test]
+fn checks_attributes_on_node_creation() {
+    let schema = support::schema("block+");
+    let error = schema.node_type("heading").unwrap()
+        .try_create(Some(json!({"level":"huh"})), None, None).unwrap_err();
+    assert!(error.to_string().contains("Expected value of type number"));
+}
+
+#[test]
+fn joins_adjacent_compatible_text_when_deserializing_a_fragment() {
+    let repr = json!({"type":"paragraph","content":[
+        {"type":"text","text":"one"},
+        {"type":"text","text":" two"},
+        {"type":"text","text":" three","marks":[{"type":"em"}]},
+        {"type":"text","text":" four","marks":[{"type":"em"}]}
+    ]});
+    let typed = support::schema("block+").node_from_json(&repr).unwrap();
+    let raw: Node = serde_json::from_value(repr).unwrap();
+    for paragraph in [typed, raw] {
+        assert_eq!(paragraph.child_count(), 2);
+        assert_eq!(paragraph.child(0).text(), Some("one two"));
+        assert_eq!(paragraph.child(1).text(), Some(" three four"));
+    }
+}
 #[test]
 fn from_wraps_a_single_node() {
     let empty_para = from_basic(p(Vec::new()));

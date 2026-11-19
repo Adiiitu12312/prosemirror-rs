@@ -1,4 +1,4 @@
-//! DOM cases from prosemirror-model 1.24.1 test/test-dom.ts.
+//! DOM cases from prosemirror-model 1.25.13 test/test-dom.ts.
 
 mod support;
 
@@ -653,6 +653,37 @@ fn preserves_whitespace_in_nodes_styled_with_white_space() {
     check_parse(&parser, input, Options::default(), document(vec![paragraph(vec![text("  okay  then ")]), paragraph(vec![text("x")])]));
 }
 
+#[test]
+fn can_move_a_block_node_out_of_a_paragraph() {
+    let parser = DomParser::from_schema(&schema());
+    // Build the DOM directly. An HTML parser would already split the paragraph.
+    let input = vec![el("p", vec![txt("Hello"), empty("hr")])];
+    check_parse(&parser, input, Options::default(), document(vec![
+        paragraph(vec![text("Hello")]),
+        pm("horizontal_rule", Vec::new()),
+    ]));
+}
+
+#[test]
+fn inserts_line_break_replacements() {
+    let base = schema();
+    let nodes = base.node_types().map(|kind| {
+        let mut spec = kind.spec.clone();
+        spec.linebreak_replacement = kind.name == "hard_break";
+        (kind.name.clone(), spec)
+    }).collect();
+    let schema = Schema::new(nodes, Vec::new());
+    let parser = DomParser::from_schema(&schema);
+    let source = "one\ntwo\n\nthree";
+    let hard_break = || pm("hard_break", Vec::new());
+    check_parse(&parser, vec![el("p", vec![styled("span", "white-space: pre", vec![txt(source)])])],
+        Options::default(), document(vec![paragraph(vec![
+            text("one"), hard_break(), text("two"), hard_break(), hard_break(), text("three"),
+        ])]));
+    check_parse(&parser, vec![el("p", vec![el("span", vec![txt(source)])])],
+        Options::default(), document(vec![paragraph(vec![text("one two three")])]));
+}
+
 fn rule_order(priorities: (i32, i32, i32)) -> String {
     let schema = Schema::new(vec![
         ("doc".to_owned(), NodeSpec { content: Some("inline*".to_owned()), ..NodeSpec::default() }),
@@ -786,9 +817,9 @@ fn serializer_does_not_interpret_document_attributes_as_dom_specs() {
         let text = node.attrs().unwrap()["alt"].to_string();
         Output::element("span", vec![Output::element("img", Vec::new()), Output::Text(text)])
     });
-    let model = schema.node_type("image").unwrap().create(Some(json!({
-        "src": "x.png", "alt": ["aside", {"class":"unexpected"}],
-    })), None, None);
+    let model = schema.node_type("image").unwrap()
+        .create(Some(json!({"src": "x.png", "alt": "foo"})), None, None)
+        .with_attrs(Some(json!({"src": "x.png", "alt": ["aside", {"class":"unexpected"}]})));
     let serialized = serializer.serialize_node(&model).unwrap();
     assert_eq!(serialized, el("span", vec![empty("img"), txt(r#"["aside",{"class":"unexpected"}]"#)]));
 }

@@ -8,7 +8,7 @@ use serde_json::Value;
 use prosemirror_model::{Fragment, Mark, Node, Slice};
 use prosemirror_transform::{Mapping, MarkFilter, Step, StepResult, Transform};
 use crate::plugin::ErasedValue;
-use crate::{CellSelection, Selection};
+use crate::{CellSelection, Selection, SelectionRange};
 
 #[derive(Clone, Debug)]
 pub struct Transaction {
@@ -81,7 +81,11 @@ impl Transaction {
     pub fn set_selection(&mut self, selection: Selection) -> &mut Self {
         assert!(
             selection.anchor() <= self.doc().content().size()
-                && selection.head(self.doc()) <= self.doc().content().size(),
+                && selection.head(self.doc()) <= self.doc().content().size()
+                && match &selection {
+                    Selection::Custom(selection) => selection.doc().ptr_eq(self.doc()),
+                    _ => true,
+                },
             "Selection must point at the current document"
         );
         self.selection_origin = selection.clone();
@@ -256,6 +260,10 @@ impl Transaction {
         if let Selection::Cell(cell) = &selection {
             return self.replace_cell_selection(cell, slice);
         }
+        if let Selection::Custom(selection) = selection {
+            selection.implementation.replace(self, slice);
+            return self;
+        }
         let empty = slice.content.child_count() == 0;
         if empty && selection == Selection::All {
             self.delete(0, self.doc().content().size());
@@ -277,19 +285,10 @@ impl Transaction {
         } else {
             None
         };
-        let mut last = slice.content.children.last();
-        let mut last_parent = None;
-        for _ in 0..slice.open_end {
-            last_parent = last;
-            last = last.and_then(|node| node.content().children.last());
-        }
-        let inline = last.map_or_else(
-            || last_parent.is_some_and(|node| node.is_textblock()),
-            |node| node.is_inline(),
-        );
+        let bias = insertion_bias(&slice);
         let map_from = self.steps().len();
         self.replace_range(from, to, slice);
-        self.selection_to_insertion_end(map_from, if inline { -1 } else { 1 });
+        self.selection_to_insertion_end(map_from, bias);
         if let Some(marks) = preserved {
             self.ensure_marks(marks);
         }
@@ -307,6 +306,10 @@ impl Transaction {
         if let Selection::Cell(cell) = &selection {
             return self.replace_cell_selection(cell, Slice::new(Fragment::from_nodes(vec![node]), 0, 0));
         }
+        if let Selection::Custom(selection) = selection {
+            selection.implementation.replace_with(self, node);
+            return self;
+        }
         let bias = if node.is_inline() { -1 } else { 1 };
         let map_from = self.steps().len();
         self.replace_range_with(from, to, node);
@@ -316,6 +319,26 @@ impl Transaction {
 
     pub fn delete_selection(&mut self) -> &mut Self {
         self.replace_selection(Slice::empty())
+    }
+
+    pub(crate) fn replace_selection_ranges(
+        &mut self,
+        ranges: Vec<SelectionRange>,
+        bias: i32,
+        insert: impl FnOnce(&mut Self, usize, usize),
+    ) {
+        let start = self.steps().len();
+        let mut first = Some(insert);
+        for range in ranges {
+            let mapping = self.mapping().slice(start, self.steps().len());
+            let (from, to) = (mapping.map(range.from.pos, 1), mapping.map(range.to.pos, 1));
+            if let Some(first) = first.take() {
+                first(self, from, to);
+                self.selection_to_insertion_end(start, bias);
+            } else {
+                self.delete_range(from, to);
+            }
+        }
     }
 
     fn replace_cell_selection(&mut self, cell: &CellSelection, slice: Slice) -> &mut Self {
@@ -435,6 +458,20 @@ impl Transaction {
             self.set_selection(Selection::near(&pos, bias));
         }
     }
+}
+
+pub(crate) fn insertion_bias(slice: &Slice) -> i32 {
+    let mut last = slice.content.children.last();
+    let mut last_parent = None;
+    for _ in 0..slice.open_end {
+        last_parent = last;
+        last = last.and_then(|node| node.content().children.last());
+    }
+    let inline = last.map_or_else(
+        || last_parent.is_some_and(Node::is_textblock),
+        Node::is_inline,
+    );
+    if inline { -1 } else { 1 }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
