@@ -35,6 +35,11 @@ impl StepResult {
     }
 }
 
+/// An atomic document change.
+///
+/// Use [`Step::from_json`] to decode custom steps with a schema. Plain serde
+/// deserialization retains their JSON for storage or submission to a
+/// [`crate::Transform`], which resolves them against its document schema.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "stepType")]
 pub enum Step {
@@ -96,11 +101,27 @@ pub trait CustomStep: Any + Debug + Send + Sync {
     fn json_fields(&self) -> Map<String, Value>;
 }
 
-type DecodeStep = fn(&Schema, &Value) -> Result<Arc<dyn CustomStep>, ModelError>;
+/// Schema-aware constructor registered for a custom step's JSON ID.
+pub type StepDecoder = fn(&Schema, &Value) -> Result<Arc<dyn CustomStep>, ModelError>;
 
-fn registered_steps() -> &'static RwLock<HashMap<String, DecodeStep>> {
-    static STEPS: OnceLock<RwLock<HashMap<String, DecodeStep>>> = OnceLock::new();
+fn registered_steps() -> &'static RwLock<HashMap<String, StepDecoder>> {
+    static STEPS: OnceLock<RwLock<HashMap<String, StepDecoder>>> = OnceLock::new();
     STEPS.get_or_init(RwLock::default)
+}
+
+fn is_builtin_id(id: &str) -> bool {
+    matches!(id, "replace" | "replaceAround" | "addMark" | "removeMark"
+        | "addNodeMark" | "removeNodeMark" | "attr" | "docAttr")
+}
+
+fn json_id(json: &Value) -> Option<&str> {
+    json.get("stepType").and_then(Value::as_str).filter(|id| !id.is_empty())
+}
+
+fn decode_custom(schema: &Schema, id: &str, json: &Value) -> Result<RegisteredStep, ModelError> {
+    let decode = registered_steps().read().unwrap().get(id).copied()
+        .ok_or_else(|| ModelError::Serialization(format!("No step type {id} defined")))?;
+    Ok(RegisteredStep::from_implementation(id.to_owned(), decode(schema, json)?))
 }
 
 /// Holds a custom step and its stable wire ID. Serde can store the original
@@ -117,15 +138,6 @@ impl RegisteredStep {
         let mut fields = implementation.json_fields();
         fields.insert("stepType".into(), Value::String(id.clone()));
         Self { id, implementation: Some(implementation), json: Value::Object(fields) }
-    }
-
-    fn bind(&self, schema: &Schema) -> Result<Self, ModelError> {
-        if self.implementation.is_some() {
-            return Ok(self.clone());
-        }
-        let decode = registered_steps().read().unwrap().get(&self.id).copied()
-            .ok_or_else(|| ModelError::Serialization(format!("No step type {} defined", self.id)))?;
-        Ok(Self::from_implementation(self.id.clone(), decode(schema, &self.json)?))
     }
 
     fn implementation(&self) -> &dyn CustomStep {
@@ -148,7 +160,7 @@ impl Serialize for RegisteredStep {
 impl<'de> Deserialize<'de> for RegisteredStep {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let json = Value::deserialize(deserializer)?;
-        let id = json.get("stepType").and_then(Value::as_str)
+        let id = json_id(&json)
             .ok_or_else(|| serde::de::Error::custom("Invalid input for Step.fromJSON"))?;
         if !registered_steps().read().unwrap().contains_key(id) {
             return Err(serde::de::Error::custom(format!("No step type {id} defined")));
@@ -167,17 +179,14 @@ fn is_false(value: &bool) -> bool {
 
 impl Step {
     /// Register a schema-aware decoder for a custom step JSON ID.
-    pub fn json_id(id: impl Into<String>, decode: DecodeStep) -> Result<(), ModelError> {
+    pub fn json_id(id: impl Into<String>, decode: StepDecoder) -> Result<(), ModelError> {
         use std::collections::hash_map::Entry;
 
         let id = id.into();
-        let built_in = matches!(id.as_str(),
-            "replace" | "replaceAround" | "addMark" | "removeMark" | "addNodeMark"
-            | "removeNodeMark" | "attr" | "docAttr");
         if id.is_empty() {
             return Err(ModelError::Serialization("Empty step JSON ID".into()));
         }
-        if !built_in {
+        if !is_builtin_id(&id) {
             if let Entry::Vacant(slot) = registered_steps().write().unwrap().entry(id.clone()) {
                 slot.insert(decode);
                 return Ok(());
@@ -186,10 +195,12 @@ impl Step {
         Err(ModelError::Serialization(format!("Duplicate use of step JSON ID {id}")))
     }
 
+    /// Wrap an implementation using its registered JSON ID.
     pub fn custom(id: impl Into<String>, implementation: impl CustomStep) -> Self {
         Self::Custom(RegisteredStep::from_implementation(id.into(), Arc::new(implementation)))
     }
 
+    /// Access the typed implementation of a custom step that has been resolved.
     pub fn as_custom<T: CustomStep>(&self) -> Option<&T> {
         let Self::Custom(step) = self else { return None };
         let step: &dyn Any = step.implementation.as_deref()?;
@@ -197,6 +208,10 @@ impl Step {
     }
 
     pub fn from_json(schema: &Schema, json: &Value) -> Result<Self, ModelError> {
+        let id = json_id(json).ok_or_else(|| ModelError::Serialization("Invalid input for Step.fromJSON".into()))?;
+        if !is_builtin_id(id) {
+            return decode_custom(schema, id, json).map(Self::Custom);
+        }
         let mut step: Self = serde_json::from_value(json.clone())
             .map_err(|error| ModelError::Serialization(error.to_string()))?;
         match &mut step {
@@ -208,7 +223,7 @@ impl Step {
                 *mark = schema.mark_from_json(&json["mark"])?;
             }
             Self::Attr { .. } | Self::DocAttr { .. } => {}
-            Self::Custom(custom) => *custom = custom.bind(schema)?,
+            Self::Custom(_) => unreachable!("custom steps are decoded through the registry"),
         }
         Ok(step)
     }
@@ -219,7 +234,7 @@ impl Step {
                 let schema = doc.schema().ok_or_else(|| ModelError::Serialization(
                     "Custom steps require a document schema".into(),
                 ))?;
-                Self::Custom(custom.bind(schema)?)
+                Self::Custom(decode_custom(schema, &custom.id, &custom.json)?)
             }
             step => step,
         })
@@ -409,7 +424,7 @@ impl Step {
         }
     }
 
-    pub fn map(&self, mapping: &impl Mappable) -> Option<Self> {
+    pub fn map(&self, mapping: &dyn Mappable) -> Option<Self> {
         let mut mapped = self.clone();
         match &mut mapped {
             Self::Replace { from, to, structure, .. } => {

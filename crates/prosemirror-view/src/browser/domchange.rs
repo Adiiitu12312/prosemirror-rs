@@ -162,6 +162,7 @@ struct ParsedChange {
 pub(crate) fn read_dom_change(view: &BrowserView, change: DomChange) -> Result<(), JsValue> {
     let browser = BrowserFlags::get();
     let config = view.props();
+    let custom_parser = config.some_prop(|props| props.dom_parser.as_ref()).cloned();
     let state = config.state;
     let now = Date::now();
     let (composition, composing, backspace, ios_enter, last_chrome_delete, selection_origin) =
@@ -196,7 +197,7 @@ pub(crate) fn read_dom_change(view: &BrowserView, change: DomChange) -> Result<(
     let to = state.doc.resolve(to).map_err(model_error)?.after(shared + 1);
     let selection = view.dom_selection();
     let parsed = view.with_doc_view(|doc_view| {
-        parse_between(doc_view, &state, (from, to), selection.as_ref(), config.props.dom_parser.as_deref(), browser, backspace)
+        parse_between(doc_view, &state, (from, to), selection.as_ref(), custom_parser.as_deref(), browser, backspace)
     }).transpose()?.ok_or_else(|| JsValue::from_str("Editor DOM is unavailable"))?;
     let compare = state.doc.slice(parsed.from, parsed.to, false).map_err(model_error)?;
     let preferred = if backspace { state.selection.to(&state.doc) } else { state.selection.from() };
@@ -441,12 +442,19 @@ impl DomAdapter<'_> {
                     .filter(|desc| same_node(node, &desc.dom));
                 let mut active_content = None;
                 if !container && self.doc_view.is_some() {
-                    if let Some(desc) = desc.as_ref().and_then(|desc| desc.model.as_ref().map(|model| (desc, model))) {
-                        let (desc, model) = desc;
-                        if !model.is_text() {
+                    if let Some(desc) = desc.as_ref().filter(|desc| desc.model.is_some() || desc.mark.is_some()) {
+                        if desc.model.as_ref().is_none_or(|model| !model.is_text()) {
                             let mut rule = self.rule(&mut portable);
-                            rule.node = Some(model.type_name().into());
-                            rule.attrs = model.attrs().cloned();
+                            if let Some(model) = &desc.model {
+                                rule.node = Some(model.type_name().into());
+                                rule.attrs = model.attrs().cloned();
+                                if model.node_type().is_some_and(|kind| kind.whitespace() == "pre") {
+                                    rule.preserve_whitespace = Some(Whitespace::Full);
+                                }
+                            } else if let Some(mark) = &desc.mark {
+                                rule.mark = Some(mark.type_name.clone());
+                                rule.attrs = mark.attrs.clone();
+                            }
                             if let Some(content) = &desc.content_dom {
                                 if !same_node(content, node) && node.contains(Some(content)) {
                                     rule.content_element = Some(format!("[data-pm-content=\"{}\"]", self.serial));
@@ -489,8 +497,8 @@ fn resolve_selection(view: &BrowserView, doc: &Node, selection: Option<(usize, u
     let (anchor, head) = selection?;
     let anchor = doc.resolve(anchor).ok()?;
     let head = doc.resolve(head).ok()?;
-    Some(view.props().create_selection_between.as_ref()
-        .and_then(|create| create(view, &anchor, &head))
+    Some(view.props().some_prop(|props| props.create_selection_between.as_ref()
+        .and_then(|create| create(view, &anchor, &head)))
         .unwrap_or_else(|| Selection::between(&anchor, &head, 0)))
 }
 
@@ -751,20 +759,29 @@ pub(crate) fn composition_end(view: &BrowserView) -> Result<(), JsValue> {
     if !view.composing() {
         return Ok(());
     }
-    view.with_input(|input| {
+    let pending = view.queue_pending_dom_records();
+    let bad_safari_composition = view.with_input(|input| {
         input.composing = false;
         input.composition_ended_at = Date::now();
-        input.composition_pending = input.composition_id;
+        input.composition_pending = if pending { input.composition_id } else { 0 };
         input.composition_finished = true;
-    });
-    let flushed = view.flush_dom();
-    view.with_input(|input| {
-        input.composition_pending = 0;
         input.composition_node = None;
         input.composition_range = None;
         input.composition_id = input.composition_id.wrapping_add(1).max(1);
+        input.bad_safari_composition
     });
-    flushed?;
+    if bad_safari_composition {
+        view.flush_dom()?;
+    } else if pending {
+        let weak = std::rc::Rc::downgrade(&view.0);
+        let callback = wasm_bindgen::closure::Closure::once_into_js(move || {
+            if let Some(inner) = weak.upgrade() {
+                super::report_error(BrowserView(inner).flush_dom());
+            }
+        });
+        web_sys::window().ok_or_else(|| JsValue::from_str("Missing browser window"))?
+            .queue_microtask(callback.unchecked_ref());
+    }
     schedule_composition_end(view, 20)
 }
 

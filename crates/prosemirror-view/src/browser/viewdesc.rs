@@ -103,6 +103,7 @@ pub struct ViewDescInfo {
     pub dom: Node,
     pub content_dom: Option<Node>,
     pub model: Option<ModelNode>,
+    pub mark: Option<Mark>,
     pub from: usize,
     pub to: usize,
     pub border: usize,
@@ -205,6 +206,10 @@ impl DocView {
                 Kind::Composition(composition) => composition.model.clone(),
                 _ => None,
             }),
+            mark: match &found.kind {
+                Kind::Mark(info) => Some(info.mark.clone()),
+                _ => None,
+            },
             from: found.from, to: found.to(), border: found.border(),
         })
     }
@@ -888,9 +893,74 @@ impl Renderer<'_> {
             .is_some_and(|ua| ua.contains("Chrome/") || ua.contains("Safari/"))
     }
 
-    fn reconcile(&self, parent: &mut Desc, wanted: Vec<Want>) -> Result<(), JsValue> {
+    fn protect_composition(&self, parent: &Desc, wanted: &mut Vec<Want>) {
+        let Some(locked) = self.composition else { return };
+        let Some(content) = &parent.content_dom else { return };
+        if !matches!(parent.kind, Kind::Mark(_)) && !parent.model().is_some_and(ModelNode::inline_content) {
+            return;
+        }
+        let Some(top) = direct_child(content, &locked.dom) else { return };
+        let from = locked.from;
+        let to = locked.to;
+        let recorded = parent.children.iter().find(|child| same(&child.dom, &top));
+        if let Some(recorded) = recorded {
+            let can_keep = wanted.iter().any(|want| {
+                if want.from > from || want.to() < to {
+                    return false;
+                }
+                match (&recorded.kind, &want.kind) {
+                    (Kind::Mark(current), WantKind::Mark { mark, .. }) =>
+                        current.mark == *mark && self.exact(recorded, want),
+                    (Kind::Node(current), WantKind::Node { node, outer, .. }) =>
+                        current.node.is_text() && node.is_text()
+                        && same(&locked.dom, &current.node_dom)
+                        && want.from == from && want.to() == to && same_outer(&current.outer, outer),
+                    _ => false,
+                }
+            });
+            if can_keep {
+                return;
+            }
+        }
+        if !wanted.iter().any(|want| want.from < to && want.to() > from) {
+            return;
+        }
+        let mut before = Vec::new();
+        let mut after = Vec::new();
+        for want in std::mem::take(wanted) {
+            if want.from >= to {
+                after.push(want);
+            } else if want.to() <= from {
+                before.push(want);
+            } else {
+                if want.from < from {
+                    before.extend(want.slice(want.from, from));
+                }
+                if want.to() > to {
+                    after.extend(want.slice(to, want.to()));
+                }
+            }
+        }
+        before.push(Want {
+            from,
+            kind: WantKind::Composition { dom: top, composition: locked.description(self.state) },
+        });
+        before.extend(after);
+        *wanted = before;
+    }
+
+    fn reconcile(&self, parent: &mut Desc, mut wanted: Vec<Want>) -> Result<(), JsValue> {
+        self.protect_composition(parent, &mut wanted);
         let mut old: Vec<_> = std::mem::take(&mut parent.children).into_iter().map(Some).collect();
-        let reserved = pre_match(&old, &wanted);
+        let mut reserved = pre_match(&old, &wanted);
+        if let Some((index, dom)) = wanted.iter().enumerate().find_map(|(index, want)| match &want.kind {
+            WantKind::Composition { dom, .. } => Some((index, dom)),
+            _ => None,
+        }) {
+            if let Some(old_index) = old.iter().position(|item| item.as_ref().is_some_and(|item| same(&item.dom, dom))) {
+                reserved[old_index] = Some(index);
+            }
+        }
         let mut previous = 0;
         let mut result = Vec::with_capacity(wanted.len());
         for (index, mut want) in wanted.into_iter().enumerate() {
@@ -923,6 +993,14 @@ impl Renderer<'_> {
                 }
             }
 
+            if matches!(want.kind, WantKind::Composition { .. }) {
+                if let Some(previous) = next.and_then(|index| {
+                    reserved[index] = None;
+                    old[index].take()
+                }) {
+                    previous.destroy();
+                }
+            }
             let wrapper = next.filter(|&i| reserved[i].is_none()).filter(|&i| {
                 old[i].as_ref().is_some_and(|desc| same_node_content(desc, &want))
             }).and_then(|i| old[i].take());
@@ -940,7 +1018,7 @@ impl Renderer<'_> {
         }
         parent.children = result;
         if let Some(content) = &parent.content_dom {
-            mount_children(content, &parent.children)?;
+            mount_children(content, &parent.children, self.composition.map(|locked| &locked.dom))?;
         }
         Ok(())
     }
@@ -973,6 +1051,7 @@ impl Renderer<'_> {
                 current.mark == *mark && same_factory(&current.factory, self.props.mark_views.get(&mark.type_name))
             }
             (Kind::Widget(current), WantKind::Widget(widget)) => same_widget(&current.decoration, widget),
+            (Kind::Composition(current), WantKind::Composition { composition, .. }) => same(&current.text, &composition.text),
             (Kind::Hack(current), WantKind::Hack(kind)) => current == kind,
             _ => false,
         }
@@ -1013,7 +1092,7 @@ impl Renderer<'_> {
 
                 current.pos.set(Some(want.from));
                 if node.is_text()
-                    && !self.locked_text.is_some_and(|text| same(text, &current.node_dom))
+                    && !self.composition.is_some_and(|locked| same(&locked.dom, &current.node_dom))
                 {
                     write_text(&current.node_dom, node)?;
                 }
@@ -1049,6 +1128,13 @@ impl Renderer<'_> {
                 desc.from = want.from;
                 Ok(true)
             }
+            (Kind::Composition(current), WantKind::Composition { dom, composition })
+                if same(&current.text, &composition.text) => {
+                desc.dom = dom.clone();
+                desc.from = want.from;
+                *current = composition.clone();
+                Ok(true)
+            }
             (Kind::Hack(current), WantKind::Hack(kind)) if current == kind => {
                 desc.from = want.from;
                 Ok(true)
@@ -1062,6 +1148,20 @@ impl Renderer<'_> {
             WantKind::Node { node, outer, inner } => self.create_node(want.from, node, outer, inner, wrapper),
             WantKind::Mark { mark, inline, children } => self.create_mark(want.from, mark, inline, children),
             WantKind::Widget(deco) => self.create_widget(want.from, deco),
+            WantKind::Composition { dom, composition } => {
+                let mut top = composition.text.clone();
+                while !same(&dom, &top) {
+                    let Some(parent) = top.parent_node() else { break };
+                    while let Some(sibling) = top.previous_sibling() {
+                        parent.remove_child(&sibling)?;
+                    }
+                    while let Some(sibling) = top.next_sibling() {
+                        parent.remove_child(&sibling)?;
+                    }
+                    top = parent;
+                }
+                Ok(Desc { dom, content_dom: None, children: Vec::new(), from: want.from, kind: Kind::Composition(composition) })
+            }
             WantKind::Hack(kind) => self.create_hack(want.from, kind),
         }
     }
@@ -1410,15 +1510,22 @@ fn patch_attributes(
     Ok(())
 }
 
-fn mount_children(parent: &Node, children: &[Desc]) -> Result<(), JsValue> {
+fn mount_children(parent: &Node, children: &[Desc], locked_text: Option<&Node>) -> Result<(), JsValue> {
     let mut mounted = parent.first_child();
     for (index, desc) in children.iter().enumerate() {
         let target = &desc.dom;
         if target.parent_node().is_some_and(|current| same(parent, &current)) {
             while let Some(node) = mounted.as_ref().filter(|node| !same(node, target)) {
                 if children[index + 1..].iter().any(|desc| same(&desc.dom, node)) {
-                    parent.insert_before(target, Some(node))?;
-                    break;
+                    if locked_text.is_some_and(|text| contains(target, text)) {
+                        let next = node.next_sibling();
+                        parent.append_child(node)?;
+                        mounted = next;
+                        continue;
+                    } else {
+                        parent.insert_before(target, Some(node))?;
+                        break;
+                    }
                 }
                 let next = node.next_sibling();
                 parent.remove_child(node)?;

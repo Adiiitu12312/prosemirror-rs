@@ -8,7 +8,7 @@ use prosemirror_test_builder::{test_schema, ChildSpec};
 use prosemirror_view::browser::{BrowserView, BrowserViewProps, WidgetView};
 use prosemirror_view::{Decoration, DecorationSet};
 use serde_json::{json, Value};
-use wasm_bindgen::JsCast;
+use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_test::wasm_bindgen_test;
 use web_sys::{CompositionEvent, Node, Text};
 
@@ -429,6 +429,37 @@ fn handles_rapid_compositions() {
     event(&view, "compositionend");
     view.flush_dom_changes().unwrap();
     assert_eq!(view.state().doc, doc!(p!("one!!"), p!("two.")).node);
+}
+
+#[wasm_bindgen_test]
+async fn pending_dom_edit_keeps_the_ended_composition_id() {
+    let changes = Rc::new(RefCell::new(Vec::new()));
+    let observed = Rc::clone(&changes);
+    let view = mount(doc!(p!("one<a>")), BrowserViewProps {
+        dispatch_transaction: Some(Rc::new(move |view, tr| {
+            if tr.doc_changed() {
+                observed.borrow_mut().push(tr.get_meta("composition").and_then(Value::as_u64));
+            }
+            view.update_state(view.state().apply(&tr)).unwrap();
+        })),
+        ..Default::default()
+    });
+    view.focus().unwrap();
+    event(&view, "compositionstart");
+    let text = child_text(&view, "one");
+    append(&text, "!");
+    view.flush_dom_changes().unwrap();
+    append(&text, "?");
+    event(&view, "compositionend");
+    assert_eq!(view.state().doc, doc!(p!("one!")).node);
+
+    js_sys::Promise::resolve(&JsValue::UNDEFINED).await.unwrap();
+
+    assert_eq!(view.state().doc, doc!(p!("one!?")).node);
+    let recorded = changes.borrow();
+    assert_eq!(recorded.len(), 2);
+    assert!(recorded[0].is_some());
+    assert_eq!(recorded[1], recorded[0]);
 }
 
 #[wasm_bindgen_test]

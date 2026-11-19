@@ -5,14 +5,14 @@ use std::rc::Rc;
 
 use prosemirror_model::Schema;
 use prosemirror_schema_basic::nodes;
-use prosemirror_state::{EditorState, EditorStateConfig, Selection};
+use prosemirror_state::{EditorState, EditorStateConfig, Plugin, Selection};
 use prosemirror_test_builder::{doc, hr, p, strong_text, BuilderContext};
 use prosemirror_view::browser::{BrowserView, BrowserViewProps, Mount};
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::wasm_bindgen_test;
-use web_sys::{ClipboardEvent, ClipboardEventInit, DataTransfer, Event, EventInit, HtmlElement};
+use web_sys::{ClipboardEvent, ClipboardEventInit, DataTransfer, Event, EventInit, HtmlElement, KeyboardEvent, KeyboardEventInit};
 
-use crate::support::{document, mount, state};
+use crate::support::{document, mount, mount_state, state};
 
 #[wasm_bindgen_test]
 fn can_mount_an_existing_node() {
@@ -214,4 +214,39 @@ fn routes_new_dom_event_props_and_cleans_up_listeners_on_destroy() {
     let event = Event::new_with_event_init_dict("example", &init).unwrap();
     assert!(root.dispatch_event(&event).unwrap());
     assert_eq!(count.get(), 1);
+}
+
+#[wasm_bindgen_test]
+fn routes_callbacks_in_direct_then_view_then_state_plugin_order() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let capture = |name, handled| {
+        let calls = calls.clone();
+        Some(Rc::new(move |_: &BrowserView, _: &KeyboardEvent| {
+            calls.borrow_mut().push(name);
+            handled
+        }) as prosemirror_view::browser::ViewEventHandler<KeyboardEvent>)
+    };
+    let plugin = Plugin::unkeyed(None);
+    let key = plugin.key.clone();
+    let mut state = state(doc!(p!("text")));
+    state.plugins.push(plugin);
+    let view = mount_state(state, BrowserViewProps {
+        handle_key_down: capture("direct", false),
+        plugins: vec![Rc::new(BrowserViewProps {
+            handle_key_down: capture("view", false),
+            ..BrowserViewProps::default()
+        })],
+        state_plugins: [(key, Rc::new(BrowserViewProps {
+            handle_key_down: capture("state", true),
+            ..BrowserViewProps::default()
+        }))].into(),
+        ..BrowserViewProps::default()
+    });
+    let init = KeyboardEventInit::new();
+    init.set_key("w");
+    init.set_bubbles(true);
+    init.set_cancelable(true);
+    let event = KeyboardEvent::new_with_keyboard_event_init_dict("keydown", &init).unwrap();
+    assert!(!view.dom().dispatch_event(&event).unwrap());
+    assert_eq!(*calls.borrow(), ["direct", "view", "state"]);
 }

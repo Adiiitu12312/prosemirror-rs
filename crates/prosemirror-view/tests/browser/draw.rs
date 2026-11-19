@@ -4,13 +4,14 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use prosemirror_model::{DomAttribute, DomOutputSpec, Fragment, MarkSpec, NodeSpec, Schema};
-use prosemirror_state::Transaction;
+use prosemirror_state::{Plugin, PluginKey, Transaction};
 use prosemirror_test_builder::{doc, h1, hr, p, strong_text, test_schema, TaggedDoc};
 use prosemirror_view::browser::{BrowserView, BrowserViewProps, NodeView, PluginView};
+use serde_json::json;
 use wasm_bindgen_test::wasm_bindgen_test;
 use web_sys::{Element, Node};
 
-use crate::support::mount;
+use crate::support::{mount, mount_state, state};
 
 fn edit(view: &BrowserView, change: impl FnOnce(&mut Transaction)) {
     let mut tr = view.state().tr();
@@ -109,12 +110,14 @@ fn adds_classes_from_the_attributes_prop() {
 
 #[wasm_bindgen_test]
 fn adds_style_from_the_attributes_prop() {
-    let view = mount(doc!(p!()), BrowserViewProps {
-        attributes: vec![
-            Rc::new(|_| [("style".to_owned(), "border: 1px solid red;".to_owned())].into()),
-            Rc::new(|_| [("style".to_owned(), "background: red;".to_owned())].into()),
-            Rc::new(|_| [("style".to_owned(), "color: red;".to_owned())].into()),
-        ],
+    let state = state(doc!(p!())).reconfigure(vec![
+        Plugin::new(PluginKey::new("background"), None)
+            .with_prop("attributes", |_| json!({"style":"background: red;"})),
+        Plugin::new(PluginKey::new("color"), None)
+            .with_prop("attributes", |_| json!({"style":"color: red;"})),
+    ]).unwrap();
+    let view = mount_state(state, BrowserViewProps {
+        attributes: vec![Rc::new(|_| [("style".to_owned(), "border: 1px solid red;".to_owned())].into())],
         ..BrowserViewProps::default()
     });
     let style = view.dom().style();

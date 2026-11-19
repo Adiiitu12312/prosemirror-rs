@@ -56,8 +56,8 @@ pub(super) fn dispatch_event(view: &BrowserView, event: &Event) -> Result<(), Js
         return Ok(());
     }
     let kind = event.type_();
-    if view.props().handle_dom_events.get(&kind)
-        .is_some_and(|handler| handler(view, event) || event.default_prevented())
+    if view.props().providers().any(|props| props.handle_dom_events.get(&kind)
+        .is_some_and(|handler| handler(view, event) || event.default_prevented()))
     {
         return Ok(());
     }
@@ -149,7 +149,7 @@ fn run_key_handler(view: &BrowserView, event: &KeyboardEvent) -> bool {
         return false;
     }
     view.0.borrow_mut().input.last_key_dispatched = true;
-    view.props().handle_key_down.as_ref().is_some_and(|handler| handler(view, event))
+    view.props().providers().any(|props| props.handle_key_down.as_ref().is_some_and(|handler| handler(view, event)))
 }
 
 fn key_down(view: &BrowserView, event: &KeyboardEvent) -> Result<(), JsValue> {
@@ -183,7 +183,7 @@ fn key_press(view: &BrowserView, event: &KeyboardEvent) -> Result<(), JsValue> {
         return Ok(());
     }
     let config = view.props();
-    if config.handle_key_press.as_ref().is_some_and(|handler| handler(view, event)) {
+    if config.providers().any(|props| props.handle_key_press.as_ref().is_some_and(|handler| handler(view, event))) {
         event.prevent_default();
         return Ok(());
     }
@@ -341,19 +341,28 @@ fn nearby_nodes(doc: &ModelNode, inside: Option<usize>) -> Vec<(ModelNode, usize
 
 fn click_handlers(view: &BrowserView, pos: PositionAtCoords, event: &MouseEvent, count: u8) -> bool {
     let config = view.props();
-    let (on, click): (Option<&ClickOnHandler>, Option<&ClickHandler>) = match count {
-        1 => (config.handle_click_on.as_ref(), config.handle_click.as_ref()),
-        2 => (config.handle_double_click_on.as_ref(), config.handle_double_click.as_ref()),
-        _ => (config.handle_triple_click_on.as_ref(), config.handle_triple_click.as_ref()),
+    let handler_on = |props: &super::BrowserViewProps| -> Option<ClickOnHandler> {
+        match count {
+            1 => props.handle_click_on.clone(),
+            2 => props.handle_double_click_on.clone(),
+            _ => props.handle_triple_click_on.clone(),
+        }
     };
-    if let Some(on) = on {
-        for (node, at) in nearby_nodes(&config.state.doc, pos.inside) {
-            if on(view, pos.pos, &node, at, event, Some(at) == pos.inside) {
-                return true;
-            }
+    let handler = |props: &super::BrowserViewProps| -> Option<ClickHandler> {
+        match count {
+            1 => props.handle_click.clone(),
+            2 => props.handle_double_click.clone(),
+            _ => props.handle_triple_click.clone(),
+        }
+    };
+    for (node, at) in nearby_nodes(&config.state.doc, pos.inside) {
+        if config.providers().filter_map(handler_on)
+            .any(|on| on(view, pos.pos, &node, at, event, Some(at) == pos.inside))
+        {
+            return true;
         }
     }
-    click.is_some_and(|click| click(view, pos.pos, event))
+    config.providers().filter_map(handler).any(|click| click(view, pos.pos, event))
 }
 
 fn triple_selection(doc: &ModelNode, inside: Option<usize>, select_nodes: bool) -> Option<Selection> {
@@ -411,10 +420,15 @@ fn paste(view: &BrowserView, event: &ClipboardEvent) -> Result<(), JsValue> {
 }
 
 fn drag_moves(view: &BrowserView, event: &DragEvent) -> bool {
-    !view.props().drag_copies.as_ref().map_or_else(
-        || if is_mac(view) { event.alt_key() } else { event.ctrl_key() },
-        |copies| copies(event),
-    )
+    let config = view.props();
+    let mut copies = config.providers().filter_map(|props| props.drag_copies.as_ref()).peekable();
+    if copies.peek().is_some() {
+        !copies.any(|copies| copies(event))
+    } else if is_mac(view) {
+        !event.alt_key()
+    } else {
+        !event.ctrl_key()
+    }
 }
 
 fn drag_start(view: &BrowserView, event: &DragEvent) -> Result<(), JsValue> {
@@ -455,13 +469,16 @@ fn drop_event(view: &BrowserView, event: &DragEvent) -> Result<(), JsValue> {
     let state = &config.state;
     let context = state.doc.resolve(pos.pos).map_err(error)?;
     let slice = if let Some(dragging) = &dragging {
-        let slice = dragging.slice.clone();
-        Some(config.transform_pasted.as_ref().map_or_else(|| slice.clone(), |transform| transform(slice.clone(), view, false)))
+        Some(config.providers().filter_map(|props| props.transform_pasted.as_ref())
+            .fold(dragging.slice.clone(), |slice, transform| transform(slice, view, false)))
     } else {
         view.parse_clipboard(&clipboard_text(&data)?, Some(&data.get_data("text/html")?), false, &context)?
     };
     let moved = dragging.is_some() && drag_moves(view, event);
-    if config.handle_drop.as_ref().is_some_and(|handler| handler(view, event, slice.as_ref().unwrap_or(&Slice::empty()), moved)) {
+    let empty = Slice::empty();
+    if config.providers().filter_map(|props| props.handle_drop.as_ref())
+        .any(|handler| handler(view, event, slice.as_ref().unwrap_or(&empty), moved))
+    {
         event.prevent_default();
         return Ok(());
     }
@@ -497,7 +514,7 @@ fn drop_event(view: &BrowserView, event: &DragEvent) -> Result<(), JsValue> {
             map.for_each(|_, _, _, new_end| end = new_end);
         }
         let to = tr.doc().resolve(end).map_err(error)?;
-        config.create_selection_between.as_ref().and_then(|create| create(view, &from, &to))
+        config.some_prop(|props| props.create_selection_between.as_ref().and_then(|create| create(view, &from, &to)))
             .unwrap_or_else(|| Selection::between(&from, &to, 1))
     };
     tr.set_selection(selection).set_meta("uiEvent", json!("drop"));

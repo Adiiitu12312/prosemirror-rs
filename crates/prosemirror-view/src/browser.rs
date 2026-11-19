@@ -16,7 +16,7 @@ use std::rc::Rc;
 
 use js_sys::Array;
 use prosemirror_model::{DomParser, DomSerializer, ResolvedPos, Slice};
-use prosemirror_state::{EditorState, Selection, Transaction};
+use prosemirror_state::{EditorState, PluginKey, Selection, Transaction};
 use wasm_bindgen::{closure::Closure, JsCast, JsValue};
 use web_sys::{
     ClipboardEvent, Document, DragEvent, Element, Event, EventTarget, HtmlElement, KeyboardEvent,
@@ -83,6 +83,8 @@ pub struct BrowserViewProps {
     pub decorations: Vec<DecorationProvider>,
     pub decoration_groups: Vec<DecorationGroupProvider>,
     pub plugin_views: Vec<PluginViewFactory>,
+    pub plugins: Vec<Rc<BrowserViewProps>>,
+    pub state_plugins: HashMap<PluginKey, Rc<BrowserViewProps>>,
     pub node_views: HashMap<String, NodeViewFactory>,
     pub mark_views: HashMap<String, MarkViewFactory>,
     pub widgets: HashMap<u64, WidgetViewFactory>,
@@ -132,6 +134,29 @@ impl Deref for BrowserViewConfig {
 impl DerefMut for BrowserViewConfig {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.props
+    }
+}
+
+impl BrowserViewConfig {
+    /// Walk direct props, view plugins, and state plugins in upstream precedence.
+    pub fn providers(&self) -> impl Iterator<Item = &BrowserViewProps> {
+        self.props.providers(&self.state)
+    }
+
+    /// Return the first value produced by a property lookup.
+    pub fn some_prop<'a, T>(&'a self, find: impl FnMut(&'a BrowserViewProps) -> Option<T>) -> Option<T> {
+        self.providers().find_map(find)
+    }
+
+    fn editable(&self) -> bool {
+        self.providers().all(|props| props.editable.as_ref().is_none_or(|edit| edit(&self.state)))
+    }
+}
+
+impl BrowserViewProps {
+    fn providers<'a>(&'a self, state: &'a EditorState) -> impl Iterator<Item = &'a Self> {
+        std::iter::once(self).chain(self.plugins.iter().map(Rc::as_ref))
+            .chain(state.plugins.iter().filter_map(|plugin| self.state_plugins.get(&plugin.key).map(Rc::as_ref)))
     }
 }
 
@@ -214,8 +239,7 @@ impl BrowserView {
     }
 
     pub fn editable(&self) -> bool {
-        let config = self.props();
-        !self.is_destroyed() && config.editable.as_ref().is_none_or(|editable| editable(&config.state))
+        !self.is_destroyed() && self.props().editable()
     }
 
     pub fn composing(&self) -> bool {
@@ -230,8 +254,11 @@ impl BrowserView {
             let inner = self.0.borrow();
             let plugins_changed = inner.state.plugins.iter().map(|plugin| &plugin.key)
                 .ne(state.plugins.iter().map(|plugin| &plugin.key));
-            let reset_views = !same_factories(&inner.props.plugin_views, &props.plugin_views)
-                || plugins_changed;
+            let old_views = inner.props.providers(&inner.state).flat_map(|props| props.plugin_views.iter())
+                .map(|factory| Rc::as_ptr(factory) as *const ());
+            let new_views = props.providers(&state).flat_map(|props| props.plugin_views.iter())
+                .map(|factory| Rc::as_ptr(factory) as *const ());
+            let reset_views = plugins_changed || old_views.ne(new_views);
             (reset_views, plugins_changed, state.scroll_to_selection > inner.state.scroll_to_selection)
         };
         let root = self.dom();
@@ -287,14 +314,14 @@ impl BrowserView {
             return Ok(false);
         }
         let config = self.props();
-        if let Some(dispatch) = &config.dispatch_transaction {
+        self.with_input(|input| input.cancel_composition_for(&transaction));
+        if let Some(dispatch) = &config.props.dispatch_transaction {
             dispatch(self, transaction);
             return Ok(true);
         }
         if transaction.before() != &config.state.doc {
             return Err(error("Applying a mismatched transaction"));
         }
-        self.with_input(|input| input.cancel_composition_for(&transaction));
         let applied = config.state.apply_transaction(&transaction);
         if applied.transactions.is_empty() {
             return Ok(false);
@@ -306,11 +333,27 @@ impl BrowserView {
     pub fn root(&self) -> Node {
         let root = self.dom();
         let tree = root.get_root_node();
-        if matches!(tree.node_type(), Node::DOCUMENT_NODE | Node::DOCUMENT_FRAGMENT_NODE) {
+        if tree.node_type() == Node::DOCUMENT_NODE || tree.is_instance_of::<web_sys::ShadowRoot>() {
             tree
         } else {
             root.owner_document().map_or(tree, Into::into)
         }
+    }
+
+    /// Rebind document listeners when the mount moves to another document.
+    pub fn update_root(&self) -> Result<(), JsValue> {
+        if self.is_destroyed() {
+            return Ok(());
+        }
+        let root = self.dom();
+        let document = root.owner_document().ok_or_else(|| error("No owner document"))?;
+        let listener = self.selection_listener(document)?;
+        let root_target: EventTarget = root.into();
+        self.0.borrow_mut().listeners.retain(|listener| {
+            listener.name != "selectionchange" || listener.target == root_target
+        });
+        self.0.borrow_mut().listeners.push(listener);
+        Ok(())
     }
 
     pub fn has_focus(&self) -> bool {
@@ -369,7 +412,7 @@ impl BrowserView {
 
     pub fn scroll_to_selection(&self) -> Result<(), JsValue> {
         let config = self.props();
-        if config.handle_scroll_to_selection.as_ref().is_some_and(|handler| handler(self)) {
+        if config.providers().any(|props| props.handle_scroll_to_selection.as_ref().is_some_and(|handler| handler(self))) {
             return Ok(());
         }
         let root = self.dom();
@@ -384,8 +427,10 @@ impl BrowserView {
         };
         if let Some(rect) = rect {
             domcoords::scroll_rect_into_view(&root, rect, &focus, ScrollOptions {
-                threshold: config.scroll_threshold_sides.unwrap_or_else(|| config.scroll_threshold.unwrap_or(0.0).into()),
-                margin: config.scroll_margin_sides.unwrap_or_else(|| config.scroll_margin.unwrap_or(5.0).into()),
+                threshold: config.some_prop(|props| props.scroll_threshold_sides.or(props.scroll_threshold.map(Into::into)))
+                    .unwrap_or_else(|| 0.0.into()),
+                margin: config.some_prop(|props| props.scroll_margin_sides.or(props.scroll_margin.map(Into::into)))
+                    .unwrap_or_else(|| 5.0.into()),
             });
         }
         Ok(())
@@ -403,6 +448,14 @@ impl BrowserView {
 
     fn flush_dom(&self) -> Result<(), JsValue> {
         self.flush_dom_changes()
+    }
+
+    fn queue_pending_dom_records(&self) -> bool {
+        self.0.borrow().observer.as_ref().is_some_and(|observer| {
+            let mut pending = observer.pending.borrow_mut();
+            pending.extend(observer.dom.take_records().iter().filter_map(|record| record.dyn_into().ok()));
+            !pending.is_empty()
+        })
     }
 
     fn dom_selection(&self) -> Option<web_sys::Selection> {
@@ -430,7 +483,9 @@ impl BrowserView {
         &self, from: usize, to: usize, text: &str, default: &dyn Fn() -> Transaction,
     ) -> Result<bool, JsValue> {
         let config = self.props();
-        if config.handle_text_input.as_ref().is_some_and(|handler| handler(self, from, to, text, default)) {
+        if config.providers().any(|props| props.handle_text_input.as_ref()
+            .is_some_and(|handler| handler(self, from, to, text, default)))
+        {
             return Ok(true);
         }
         config.state.handle_text_input(from, to, text, self.composing())
@@ -453,8 +508,11 @@ impl BrowserView {
         if self.is_destroyed() {
             return Ok(());
         }
-        let records = records.iter().filter_map(|record| record.dyn_into::<MutationRecord>().ok()).collect::<Vec<_>>();
-        domobserver::observe_mutations(self, &records, selection_changed)
+        let mut pending = self.0.borrow().observer.as_ref().map_or_else(Vec::new, |observer| {
+            std::mem::take(&mut *observer.pending.borrow_mut())
+        });
+        pending.extend(records.iter().filter_map(|record| record.dyn_into::<MutationRecord>().ok()));
+        domobserver::observe_mutations(self, &pending, selection_changed)
     }
 
     fn read_selection(&self, origin: SelectionOrigin) -> Option<Selection> {
@@ -469,7 +527,7 @@ impl BrowserView {
             selection::read_selection(&inner.root, &config.state, &inner.doc_view, origin, Some(&create))
         };
         between.into_inner().and_then(|(anchor, head)| {
-            config.create_selection_between.as_ref().and_then(|create| create(self, &anchor, &head))
+            config.some_prop(|props| props.create_selection_between.as_ref().and_then(|create| create(self, &anchor, &head)))
         }).or(selection)
     }
 
@@ -490,12 +548,26 @@ impl BrowserView {
 
     fn render(&self, write_selection: bool) -> Result<(), JsValue> {
         let config = self.props();
-        let editable = config.editable.as_ref().is_none_or(|editable| editable(&config.state));
+        let editable = config.editable();
         let decorations = DecorationGroup {
-            members: config.decorations.iter().filter_map(|get| get(&config.state))
-                .chain(config.decoration_groups.iter().flat_map(|get| get(&config.state).members))
+            members: config.providers().flat_map(|props| {
+                props.decorations.iter().filter_map(|get| get(&config.state))
+                    .chain(props.decoration_groups.iter().flat_map(|get| get(&config.state).members))
+            })
                 .filter(|set| !set.is_empty()).collect(),
         };
+        let mut rendering = BrowserViewProps::default();
+        for props in config.providers() {
+            for (name, factory) in &props.node_views {
+                rendering.node_views.entry(name.clone()).or_insert_with(|| factory.clone());
+            }
+            for (name, factory) in &props.mark_views {
+                rendering.mark_views.entry(name.clone()).or_insert_with(|| factory.clone());
+            }
+            for (id, factory) in &props.widgets {
+                rendering.widgets.entry(*id).or_insert_with(|| factory.clone());
+            }
+        }
         {
             let mut inner = self.0.borrow_mut();
             if let Some(observer) = &inner.observer {
@@ -507,7 +579,7 @@ impl BrowserView {
             inner.doc_view.set_composition_node(composition_node);
             inner.doc_view.set_composition_range(composition_range);
             let result = inner.update_attributes(editable, &config)
-                .and_then(|()| inner.doc_view.update(&config.state, &decorations, &config.props));
+                .and_then(|()| inner.doc_view.update(&config.state, &decorations, &rendering));
             if let Some(observer) = &inner.observer {
                 observer.start(&inner.root)?;
             }
@@ -523,8 +595,9 @@ impl BrowserView {
     }
 
     fn create_plugin_views(&self) {
-        let factories = self.props().plugin_views.clone();
-        let views = factories.iter().map(|factory| factory(self)).collect();
+        let config = self.props();
+        let views = config.providers().flat_map(|props| props.plugin_views.iter())
+            .map(|factory| factory(self)).collect();
         self.0.borrow_mut().plugin_views = views;
     }
 
@@ -538,14 +611,17 @@ impl BrowserView {
     fn ensure_listeners(&self) -> Result<(), JsValue> {
         let root = self.dom();
         let config = self.props();
-        let events = input::EVENTS.iter().copied().chain(config.handle_dom_events.keys().map(String::as_str));
-        let mut registered = self.0.borrow().listeners.iter().map(|listener| listener.name.clone()).collect::<HashSet<_>>();
+        let events = input::EVENTS.iter().copied()
+            .chain(config.providers().flat_map(|props| props.handle_dom_events.keys().map(String::as_str)));
+        let target: EventTarget = root.into();
+        let mut registered = self.0.borrow().listeners.iter().filter(|listener| listener.target == target)
+            .map(|listener| listener.name.clone()).collect::<HashSet<_>>();
         for name in events {
             if !registered.insert(name.to_owned()) {
                 continue;
             }
             let weak = Rc::downgrade(&self.0);
-            let listener = Listener::new(root.clone().into(), name, move |event| {
+            let listener = Listener::new(target.clone(), name, move |event| {
                 if let Some(inner) = weak.upgrade() {
                     report_error(input::handle_event(&BrowserView(inner), &event));
                 }
@@ -566,19 +642,24 @@ impl BrowserView {
         });
         let observer = Observer {
             dom: MutationObserver::new(callback.as_ref().unchecked_ref())?,
+            pending: RefCell::default(),
             _callback: callback,
         };
         observer.start(&root)?;
-        let weak = Rc::downgrade(&self.0);
-        let selection_listener = Listener::new(document.into(), "selectionchange", move |_| {
-            if let Some(inner) = weak.upgrade() {
-                report_error(BrowserView(inner).flush_dom_changes());
-            }
-        })?;
+        let selection_listener = self.selection_listener(document)?;
         let mut inner = self.0.borrow_mut();
         inner.listeners.push(selection_listener);
         inner.observer = Some(observer);
         Ok(())
+    }
+
+    fn selection_listener(&self, document: Document) -> Result<Listener, JsValue> {
+        let weak = Rc::downgrade(&self.0);
+        Listener::new(document.into(), "selectionchange", move |_| {
+            if let Some(inner) = weak.upgrade() {
+                report_error(BrowserView(inner).flush_dom_changes());
+            }
+        })
     }
 }
 
@@ -593,7 +674,9 @@ impl BrowserViewInner {
                 attrs.iter().filter_map(|(name, value)| Some((name.clone(), value.as_str()?.to_owned()))).collect()
             })
         });
-        for provider_attrs in config.attributes.iter().map(|provider| provider(&config.state)).chain(plugin_attributes) {
+        for provider_attrs in config.providers().flat_map(|props| props.attributes.iter())
+            .map(|provider| provider(&config.state)).chain(plugin_attributes)
+        {
             for (name, value) in provider_attrs {
                 match name.as_str() {
                     "class" => {
@@ -703,6 +786,7 @@ impl Drop for Listener {
 
 struct Observer {
     dom: MutationObserver,
+    pending: RefCell<Vec<MutationRecord>>,
     _callback: Closure<dyn FnMut(Array, MutationObserver)>,
 }
 
@@ -723,10 +807,6 @@ impl Drop for Observer {
     fn drop(&mut self) {
         self.dom.disconnect();
     }
-}
-
-fn same_factories(a: &[PluginViewFactory], b: &[PluginViewFactory]) -> bool {
-    a.len() == b.len() && a.iter().zip(b).all(|(a, b)| Rc::ptr_eq(a, b))
 }
 
 fn window_document() -> Result<Document, JsValue> {

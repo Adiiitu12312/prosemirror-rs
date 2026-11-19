@@ -25,12 +25,14 @@ impl BrowserView {
 
     pub fn serialize_for_clipboard(&self, slice: Slice) -> Result<BrowserClipboardData, JsValue> {
         let config = self.props();
-        let transform = |slice| (config.transform_copied.as_ref().unwrap())(slice, self);
-        let text = |slice: &Slice| (config.clipboard_text_serializer.as_ref().unwrap())(slice, self);
+        let slice = config.providers().filter_map(|props| props.transform_copied.as_ref())
+            .fold(slice, |slice, transform| transform(slice, self));
+        let text = |slice: &Slice| config.some_prop(|props| props.clipboard_text_serializer.as_ref()
+            .map(|serialize| serialize(slice, self)).filter(|text| !text.is_empty()))
+            .unwrap_or_default();
         let data = serialize_for_clipboard(&config.state.schema, slice, &ClipboardOptions {
-            serializer: config.clipboard_serializer.as_deref(),
-            transform_copied: config.transform_copied.as_ref().map(|_| &transform as &dyn Fn(Slice) -> Slice),
-            text_serializer: config.clipboard_text_serializer.as_ref().map(|_| &text as &dyn Fn(&Slice) -> String),
+            serializer: config.some_prop(|props| props.clipboard_serializer.as_deref()),
+            text_serializer: Some(&text),
             ..ClipboardOptions::default()
         }).map_err(error)?;
         let document = self.dom().owner_document().ok_or_else(|| error("No owner document"))?;
@@ -46,24 +48,27 @@ impl BrowserView {
         let as_text = !text.is_empty()
             && (plain || html.is_none() || context.parent().node_type().is_some_and(|kind| kind.spec.code));
         let dom = if let Some(html) = html.filter(|_| !as_text) {
-            let transformed = config.transform_pasted_html.as_ref().map(|transform| transform(html, self));
+            let html = config.providers().filter_map(|props| props.transform_pasted_html.as_ref())
+                .fold(html.to_owned(), |html, transform| transform(&html, self));
             let document = self.dom().owner_document().ok_or_else(|| error("No owner document"))?;
-            Some(parse_html(&document, transformed.as_deref().unwrap_or(html))?)
+            Some(parse_html(&document, &html)?)
         } else {
             None
         };
-        let transform_text = |text: &str, plain| (config.transform_pasted_text.as_ref().unwrap())(text, plain, self);
-        let transform_slice = |slice, plain| (config.transform_pasted.as_ref().unwrap())(slice, self, plain);
+        let transform_text = |text: &str, plain| config.providers().filter_map(|props| props.transform_pasted_text.as_ref())
+            .fold(text.to_owned(), |text, transform| transform(&text, plain, self));
+        let transform_slice = |slice, plain| config.providers().filter_map(|props| props.transform_pasted.as_ref())
+            .fold(slice, |slice, transform| transform(slice, self, plain));
         let parse_text = |text: &str, context: &ResolvedPos, plain| {
-            (config.clipboard_text_parser.as_ref().unwrap())(text, context, plain, self)
+            config.some_prop(|props| props.clipboard_text_parser.as_ref()
+                .and_then(|parse| parse(text, context, plain, self)))
         };
         parse_from_clipboard(&config.state.schema, text, dom, plain, context, &ClipboardOptions {
-            parser: config.clipboard_parser.as_deref().or(config.dom_parser.as_deref()),
-            transform_pasted_text: config.transform_pasted_text.as_ref()
-                .map(|_| &transform_text as &dyn Fn(&str, bool) -> String),
-            transform_pasted: config.transform_pasted.as_ref().map(|_| &transform_slice as &dyn Fn(Slice, bool) -> Slice),
-            text_parser: config.clipboard_text_parser.as_ref()
-                .map(|_| &parse_text as &dyn Fn(&str, &ResolvedPos, bool) -> Option<Slice>),
+            parser: config.some_prop(|props| props.clipboard_parser.as_deref())
+                .or_else(|| config.some_prop(|props| props.dom_parser.as_deref())),
+            transform_pasted_text: Some(&transform_text),
+            transform_pasted: Some(&transform_slice),
+            text_parser: Some(&parse_text),
             ..ClipboardOptions::default()
         }).map_err(error)
     }
@@ -75,7 +80,9 @@ impl BrowserView {
         let context = config.state.doc.resolve(config.state.selection.from()).map_err(error)?;
         let slice = self.parse_clipboard(text, html, plain, &context)?;
         let empty = Slice::empty();
-        if config.handle_paste.as_ref().is_some_and(|handler| handler(self, event, slice.as_ref().unwrap_or(&empty))) {
+        if config.providers().filter_map(|props| props.handle_paste.as_ref())
+            .any(|handler| handler(self, event, slice.as_ref().unwrap_or(&empty)))
+        {
             return Ok(true);
         }
         let Some(slice) = slice else { return Ok(false) };
