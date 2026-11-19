@@ -1,0 +1,13 @@
+{
+  "width": 420,
+  "height": 220,
+  "doc": {"type":"doc","content":[{"type":"paragraph"}]},
+  "events": [
+    {"type":"focus"},
+    {"type":"text","text":"[ ] "},
+    {"type":"text","text":"Buy milk"},
+    {"type":"key","key":"Enter","control":true,"shift":true},
+    {"type":"key","key":"Enter"},
+    {"type":"text","text":"Call"}
+  ]
+}

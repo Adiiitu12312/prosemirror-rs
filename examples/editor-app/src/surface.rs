@@ -377,18 +377,15 @@ impl TextStyle {
             if attrs.get("class").is_some_and(|name| name.contains("search-match")) {
                 self.background = Some(Color::rgb(255, 229, 151));
             }
-            if let Some(style) = attrs.get("style") {
-                for (property, value) in style.split(';').filter_map(|pair| pair.split_once(':')) {
-                    match property.trim() {
-                        "background" | "background-color" => self.background = parse_color(value),
-                        "color" => self.color = parse_color(value).unwrap_or(self.color),
-                        "font-weight" if value.trim() == "bold" => self.bold = true,
-                        "font-style" if value.trim() == "italic" => self.italic = true,
-                        "text-decoration" if value.contains("underline") => self.underline = true,
-                        _ => {}
-                    }
-                }
+            if let Some(background) = attrs.get("background").and_then(|value| parse_color(value)) {
+                self.background = Some(background);
             }
+            if let Some(foreground) = attrs.get("foreground").and_then(|value| parse_color(value)) {
+                self.color = foreground;
+            }
+            self.bold |= attrs.get("bold").is_some_and(|value| value == "true");
+            self.italic |= attrs.get("italic").is_some_and(|value| value == "true");
+            self.underline |= attrs.get("underline").is_some_and(|value| value == "true");
         }
         self
     }
@@ -514,7 +511,7 @@ impl Shaper<'_> {
                     scene.fill(rect(x, y, 3.0, height), GRID);
                     height
                 }
-                "ordered_list" | "bullet_list" => self.layout_list(node, x, y, width, scene),
+                "ordered_list" | "bullet_list" | "task_list" => self.layout_list(node, x, y, width, scene),
                 _ => self.layout_children(node, x, y, width, scene),
             }
         };
@@ -535,12 +532,19 @@ impl Shaper<'_> {
     }
 
     fn layout_list(&mut self, node: &DisplayNode, x: f64, y: f64, width: f64, scene: &mut Scene) -> f64 {
-        let ordered = node.node.type_name() == "ordered_list";
+        let kind = node.node.type_name();
         let start = node.node.attrs().and_then(|attrs| attrs["order"].as_u64()).unwrap_or(1);
         let mut height = 0.0;
         for (index, child) in node.children.iter().filter_map(child_node).enumerate() {
-            let marker = if ordered { format!("{}.", start + index as u64) } else { "•".into() };
-            self.label(&marker, x + 2.0, y + height + 1.0, scene);
+            let marker_y = y + height;
+            match kind {
+                "ordered_list" => self.label(&format!("{}.", start + index as u64), x + 2.0, marker_y + 1.0, scene),
+                "task_list" => {
+                    let checked = child.node.attrs().and_then(|attrs| attrs["checked"].as_bool()).unwrap_or(false);
+                    task_checkbox(scene, x + 2.0, marker_y + 5.0, checked);
+                }
+                _ => self.label("•", x + 2.0, marker_y + 1.0, scene),
+            }
             height += self.layout_node(child, x + 28.0, y + height, (width - 28.0).max(12.0), scene) + 5.0;
         }
         height.max(20.0)
@@ -752,6 +756,17 @@ impl Shaper<'_> {
                     physical: glyph.physical((x as f32, y as f32 + run.line_y), 1.0), color: style.color,
                 });
             }
+        }
+    }
+}
+
+fn task_checkbox(scene: &mut Scene, x: f64, y: f64, checked: bool) {
+    let bounds = rect(x, y, 14.0, 14.0);
+    scene.border(bounds, if checked { BLUE } else { MUTED });
+    if checked {
+        scene.fill(rect(x + 1.0, y + 1.0, 12.0, 12.0), BLUE);
+        for (column, row) in [7.0, 8.0, 9.0, 8.0, 7.0, 6.0, 5.0, 4.0].into_iter().enumerate() {
+            scene.fill(rect(x + 3.0 + column as f64, y + row, 1.0, 2.0), PAPER);
         }
     }
 }

@@ -50,3 +50,17 @@ fn block_drag_reorders_document() {
     ]}));
     assert_eq!(output["selection"], json!({"type":"node","anchor":8}));
 }
+
+#[test]
+fn markdown_task_can_be_checked_and_followed_by_an_unchecked_item() {
+    let output = replay("task_list", 420, 220);
+    assert_eq!(output["doc"], json!({"type":"doc","content":[{"type":"task_list","content":[
+        {"type":"task_item","attrs":{"checked":true},"content":[
+            {"type":"paragraph","content":[{"type":"text","text":"Buy milk"}]}
+        ]},
+        {"type":"task_item","attrs":{"checked":false},"content":[
+            {"type":"paragraph","content":[{"type":"text","text":"Call"}]}
+        ]}
+    ]}]}));
+    assert_eq!(output["selection"], json!({"type":"text","anchor":19,"head":19}));
+}

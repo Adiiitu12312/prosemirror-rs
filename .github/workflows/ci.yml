@@ -45,21 +45,25 @@ jobs:
         run: npm test
 
       - name: Cargo Check
+        id: check
         run: cargo check --workspace --all-targets
 
       - name: Run Test Suite
         run: cargo test --workspace --all-targets --no-fail-fast
 
       - name: Capture native editor screenshots
+        if: ${{ !cancelled() && steps.check.outcome == 'success' }}
+        id: screenshots
         shell: bash
         run: |
           mkdir -p screenshots
           cargo run --bin editor-app -- --snapshot screenshots/editor.png
-          for scenario in typing selection block_drag; do
+          for scenario in typing selection block_drag task_list; do
             cargo run --bin editor-app -- --replay "examples/editor-app/tests/fixtures/${scenario}.json" --png "screenshots/${scenario}.png"
           done
 
       - name: Save native editor screenshots
+        if: ${{ !cancelled() && steps.screenshots.outcome == 'success' }}
         uses: actions/upload-artifact@v4
         with:
           name: editor-screenshots-${{ matrix.os }}

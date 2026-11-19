@@ -1,6 +1,6 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-// Reference PNGs were captured on Ubuntu in GitHub Actions run 44564352590.
+// References were captured on Ubuntu in Actions runs 44564352590 and 44567567353.
 
 use std::fs::File;
 use std::io::BufReader;
@@ -89,4 +89,9 @@ fn renders_selection_at_reference_pixels() {
 #[test]
 fn renders_block_drag_at_reference_pixels() {
     compare("block_drag", Some("block_drag"));
+}
+
+#[test]
+fn renders_task_checkboxes_at_reference_pixels() {
+    compare("task_list", Some("task_list"));
 }

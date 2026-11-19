@@ -62,7 +62,13 @@ pub fn props(platform: Platform) -> EditorProps {
         let modifier = if mac { flags.meta } else { flags.control };
         let mut transaction = None;
         let mut dispatch = |tr| transaction = Some(tr);
-        if modifier && flags.shift && key.key.eq_ignore_ascii_case("x") {
+        if modifier && flags.shift && key.key == "Enter" {
+            transaction = toggle_task(state);
+        } else if key.key == "Enter" && flags == Default::default()
+            && prosemirror_schema_list::split_list_item("task_item", Some(json!({"checked":false})))(state, Some(&mut dispatch))
+        {
+            return transaction.map_or(EventAction::Continue, EventAction::transaction);
+        } else if modifier && flags.shift && key.key.eq_ignore_ascii_case("x") {
             prosemirror_commands::toggle_mark("strike", None)(state, Some(&mut dispatch));
         } else if modifier && key.key.eq_ignore_ascii_case("k") {
             prosemirror_commands::toggle_mark("link", Some(json!({"href":"https://prosemirror.net/"})))(state, Some(&mut dispatch));
@@ -77,6 +83,17 @@ pub fn props(platform: Platform) -> EditorProps {
         transaction.map_or(EventAction::Continue, EventAction::transaction)
     }));
     EditorProps { direct, ..EditorProps::default() }
+}
+
+fn toggle_task(state: &EditorState) -> Option<prosemirror_state::Transaction> {
+    let caret = state.doc.resolve(state.selection.head(&state.doc)).ok()?;
+    let depth = (1..=caret.depth).rev().find(|depth| caret.node(*depth).type_name() == "task_item")?;
+    let checked = caret.node(depth).attrs().and_then(|attrs| attrs["checked"].as_bool()).unwrap_or(false);
+    let mut tr = state.tr();
+    tr.apply_transform(|transform| {
+        transform.set_node_attribute(caret.before(depth), "checked", json!(!checked));
+    });
+    Some(tr)
 }
 
 struct TableView;
@@ -100,6 +117,8 @@ pub fn sample() -> Node {
             {"type":"text","text":"emphasis","marks":[{"type":"em"}]},
             {"type":"text","text":", "},
             {"type":"text","text":"code","marks":[{"type":"code"}]},
+            {"type":"text","text":", "},
+            {"type":"text","text":"strike","marks":[{"type":"strike"}]},
             {"type":"text","text":" and "},
             {"type":"text","text":"links","marks":[{"type":"link","attrs":{"href":"https://prosemirror.net/"}}]},
             {"type":"text","text":"."}
