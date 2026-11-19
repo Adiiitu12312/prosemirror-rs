@@ -1,9 +1,15 @@
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 pub const DEL_BEFORE: u8 = 1;
 pub const DEL_AFTER: u8 = 2;
 pub const DEL_ACROSS: u8 = 4;
 pub const DEL_SIDE: u8 = 8;
+
+pub trait Mappable {
+    fn map(&self, pos: usize, assoc: i32) -> usize;
+    fn map_result(&self, pos: usize, assoc: i32) -> MapResult;
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MapResult {
@@ -54,14 +60,12 @@ impl StepMap {
     }
 
     pub fn new(ranges: Vec<usize>) -> Self {
-        assert!(ranges.len() % 3 == 0, "Ranges must be multiple of 3");
-        Self {
-            ranges,
-            inverted: false,
-        }
+        Self::new_inverted(ranges, false)
     }
 
     pub fn new_inverted(ranges: Vec<usize>, inverted: bool) -> Self {
+        assert_eq!(ranges.chunks_exact(3).remainder().len(), 0, "Ranges must be multiple of 3");
+        let inverted = inverted && !ranges.is_empty();
         Self { ranges, inverted }
     }
 
@@ -78,6 +82,46 @@ impl StepMap {
 
     pub fn map_result(&self, pos: usize, assoc: i32) -> MapResult {
         self.map_internal(pos, assoc, false)
+    }
+
+    pub fn offset(offset: isize) -> Self {
+        match offset.cmp(&0) {
+            std::cmp::Ordering::Less => Self::single(0, offset.unsigned_abs(), 0),
+            std::cmp::Ordering::Equal => Self::empty(),
+            std::cmp::Ordering::Greater => Self::single(0, 0, offset as usize),
+        }
+    }
+
+    pub fn for_each(&self, mut visit: impl FnMut(usize, usize, usize, usize)) {
+        let mut diff = 0;
+        for range in self.ranges.chunks_exact(3) {
+            let start = range[0] as isize;
+            let (old_start, new_start, old_size, new_size) = if self.inverted {
+                (start - diff, start, range[2], range[1])
+            } else {
+                (start, start + diff, range[1], range[2])
+            };
+            visit(
+                old_start as usize,
+                old_start as usize + old_size,
+                new_start as usize,
+                new_start as usize + new_size,
+            );
+            diff += new_size as isize - old_size as isize;
+        }
+    }
+
+    pub fn touches(&self, pos: usize, recover: u64) -> bool {
+        let range_index = (recover & 0xffff) as usize;
+        let mut touches = false;
+        let mut index = 0;
+        self.for_each(|start, end, _, _| {
+            if index == range_index && start <= pos && pos <= end {
+                touches = true;
+            }
+            index += 1;
+        });
+        touches
     }
 
     fn map_internal(&self, pos: usize, assoc: i32, simple: bool) -> MapResult {
@@ -168,10 +212,33 @@ impl StepMap {
     }
 
     pub fn invert(&self) -> Self {
-        Self {
-            ranges: self.ranges.clone(),
-            inverted: !self.inverted,
+        Self::new_inverted(self.ranges.clone(), !self.inverted)
+    }
+}
+
+impl Mappable for StepMap {
+    fn map(&self, pos: usize, assoc: i32) -> usize {
+        Self::map(self, pos, assoc)
+    }
+
+    fn map_result(&self, pos: usize, assoc: i32) -> MapResult {
+        Self::map_result(self, pos, assoc)
+    }
+}
+
+impl fmt::Display for StepMap {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.inverted {
+            formatter.write_str("-")?;
         }
+        formatter.write_str("[")?;
+        for (index, value) in self.ranges.iter().enumerate() {
+            if index != 0 {
+                formatter.write_str(",")?;
+            }
+            write!(formatter, "{value}")?;
+        }
+        formatter.write_str("]")
     }
 }
 
@@ -186,11 +253,16 @@ pub struct Mapping {
 
 impl Mapping {
     pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn from_maps(maps: Vec<StepMap>) -> Self {
+        let to = maps.len();
         Self {
-            maps: Vec::new(),
+            maps,
             mirror: None,
             from: 0,
-            to: 0,
+            to,
         }
     }
 
@@ -255,17 +327,18 @@ impl Mapping {
     }
 
     pub fn map(&self, pos: usize, assoc: i32) -> usize {
-        self.map_internal(pos, assoc, true).pos
+        if self.mirror.is_some() {
+            return self.map_result(pos, assoc).pos;
+        }
+        (self.from..self.to.min(self.maps.len())).fold(pos, |mapped, index| {
+            self.maps[index].map(mapped, assoc)
+        })
     }
 
-    pub fn map_result(&self, pos: usize, assoc: i32) -> MapResult {
-        self.map_internal(pos, assoc, false)
-    }
-
-    fn map_internal(&self, mut pos: usize, assoc: i32, simple: bool) -> MapResult {
+    pub fn map_result(&self, mut pos: usize, assoc: i32) -> MapResult {
         let mut del_info = 0;
         let mut i = self.from;
-        let end = if self.to == 0 { self.maps.len() } else { self.to.min(self.maps.len()) };
+        let end = self.to.min(self.maps.len());
 
         while i < end {
             let res = self.maps[i].map_result(pos, assoc);
@@ -283,10 +356,16 @@ impl Mapping {
             i += 1;
         }
 
-        if simple {
-            MapResult::new(pos, 0, None)
-        } else {
-            MapResult::new(pos, del_info, None)
-        }
+        MapResult::new(pos, del_info, None)
+    }
+}
+
+impl Mappable for Mapping {
+    fn map(&self, pos: usize, assoc: i32) -> usize {
+        Self::map(self, pos, assoc)
+    }
+
+    fn map_result(&self, pos: usize, assoc: i32) -> MapResult {
+        Self::map_result(self, pos, assoc)
     }
 }

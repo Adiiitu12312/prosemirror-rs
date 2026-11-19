@@ -3,6 +3,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use crate::error::ModelError;
 use crate::mark::Mark;
+use crate::resolved_pos::ResolvedPos;
 
 pub fn slice_utf16(s: &str, start_u16: usize, end_u16: usize) -> String {
     let u16_units: Vec<u16> = s.encode_utf16().collect();
@@ -15,12 +16,12 @@ pub fn slice_utf16(s: &str, start_u16: usize, end_u16: usize) -> String {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Node {
     inner: Arc<NodeInner>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct NodeInner {
     pub type_name: String,
     pub attrs: Option<Value>,
@@ -29,7 +30,7 @@ pub struct NodeInner {
     pub text: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct Fragment {
     pub children: Vec<Node>,
     pub size: usize,
@@ -231,6 +232,10 @@ impl Node {
 
     pub fn child(&self, index: usize) -> &Node {
         self.inner.content.child(index)
+    }
+
+    pub fn resolve(&self, pos: usize) -> Result<ResolvedPos, ModelError> {
+        ResolvedPos::resolve(self, pos)
     }
 
     pub fn copy(&self, content: Option<Fragment>) -> Self {

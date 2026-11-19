@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use prosemirror_model::{replace_at_pos, slice_utf16, Mark, Node, Slice};
 use crate::map::StepMap;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum StepResult {
     Ok(Node),
     Failed(String),
@@ -18,7 +18,7 @@ impl StepResult {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "stepType")]
 pub enum Step {
     #[serde(rename = "replace")]

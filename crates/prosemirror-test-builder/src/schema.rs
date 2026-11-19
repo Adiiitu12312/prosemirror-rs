@@ -11,7 +11,7 @@ pub fn test_schema() -> &'static Schema {
             ("heading".to_string(), NodeSpec { content: Some("inline*".to_string()), group: Some("block".to_string()), ..Default::default() }),
             ("code_block".to_string(), NodeSpec { content: Some("text*".to_string()), group: Some("block".to_string()), code: true, ..Default::default() }),
             ("horizontal_rule".to_string(), NodeSpec { group: Some("block".to_string()), ..Default::default() }),
-            ("text".to_string(), NodeSpec { inline: true, ..Default::default() }),
+            ("text".to_string(), NodeSpec { inline: true, group: Some("inline".to_string()), ..Default::default() }),
         ];
         let marks = vec![
             ("em".to_string(), MarkSpec { ..Default::default() }),

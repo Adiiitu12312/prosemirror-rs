@@ -1,0 +1,41 @@
+[package]
+name = "prosemirror-integration-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+autolib = false
+
+[dev-dependencies]
+prosemirror-commands.workspace = true
+prosemirror-history.workspace = true
+prosemirror-model.workspace = true
+prosemirror-state.workspace = true
+prosemirror-test-builder.workspace = true
+prosemirror-transform.workspace = true
+prosemirror-view.workspace = true
+serde_json.workspace = true
+
+[[test]]
+name = "commands"
+path = "../../tests/commands_tests.rs"
+
+[[test]]
+name = "history"
+path = "../../tests/history_tests.rs"
+
+[[test]]
+name = "model"
+path = "../../tests/model_tests.rs"
+
+[[test]]
+name = "state"
+path = "../../tests/state_tests.rs"
+
+[[test]]
+name = "transform"
+path = "../../tests/transform_tests.rs"
+
+[[test]]
+name = "view"
+path = "../../tests/view_spike_tests.rs"

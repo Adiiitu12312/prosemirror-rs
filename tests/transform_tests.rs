@@ -9,7 +9,7 @@ fn test_step_map_mapping() {
 
     assert_eq!(map.map(0, 1), 0);
     assert_eq!(map.map(1, -1), 1);
-    assert_eq!(map.map(1, 1), 3);
+    assert_eq!(map.map(1, 1), 1);
     assert_eq!(map.map(6, 1), 3);
     assert_eq!(map.map(10, 1), 7); // 10 - 5 + 2 = 7
 

@@ -1,5 +1,5 @@
-use prosemirror_model::{Fragment, Mark, Node, Slice};
-use prosemirror_test_builder::{build_doc, p, text, test_schema};
+use prosemirror_model::{Mark, Node};
+use prosemirror_test_builder::{build_doc, p, text};
 
 #[test]
 fn test_node_creation_and_size() {

@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use crate::node::Fragment;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Slice {
     pub content: Fragment,
     #[serde(rename = "openStart", default)]

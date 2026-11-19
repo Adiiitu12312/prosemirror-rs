@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Mark {
     #[serde(rename = "type")]
     pub type_name: String,
@@ -37,7 +37,7 @@ impl Mark {
         }
         if !added {
             result.push(mark);
-            result.sort();
+            result.sort_by(|a, b| a.type_name.cmp(&b.type_name));
         }
         result
     }

@@ -1,4 +1,3 @@
-use prosemirror_model::Node;
 use prosemirror_state::{EditorState, EditorStateConfig, Selection};
 use prosemirror_test_builder::{build_doc, p, text, test_schema};
 

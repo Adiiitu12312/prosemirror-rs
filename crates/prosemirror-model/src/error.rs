@@ -10,6 +10,10 @@ pub enum ModelError {
     UnknownMarkType(String),
     #[error("Invalid content for node '{0}'")]
     InvalidContent(String),
+    #[error("Invalid schema: {0}")]
+    InvalidSchema(String),
+    #[error("Invalid attributes: {0}")]
+    InvalidAttributes(String),
     #[error("Invalid slice open depths: start {0}, end {1}")]
     InvalidSlice(usize, usize),
     #[error("Replace error: {0}")]

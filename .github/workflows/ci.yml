@@ -2,9 +2,10 @@ name: CI Pipeline
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [ "main", "master", "codex/prosemirror-parity" ]
   pull_request:
     branches: [ "main", "master" ]
+  workflow_dispatch:
   schedule:
     # Run differential fuzzing continuously every night
     - cron: '0 2 * * *'
@@ -40,8 +41,8 @@ jobs:
       - name: Install Node Oracle dependencies
         run: npm ci
 
-      - name: Verify Node Oracle Sanity
-        run: node oracle/test_oracle.js
+      - name: Run Node Oracle Tests
+        run: npm test
 
       - name: Cargo Check
         run: cargo check --workspace --all-targets
