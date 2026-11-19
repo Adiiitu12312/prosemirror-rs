@@ -7,7 +7,7 @@ use serde_json::Value;
 use prosemirror_model::{Fragment, Mark, Node, Slice};
 use prosemirror_transform::{Mapping, MarkFilter, Step, StepResult, Transform};
 use crate::plugin::ErasedValue;
-use crate::selection::Selection;
+use crate::{CellSelection, Selection};
 
 #[derive(Clone, Debug)]
 pub struct Transaction {
@@ -254,6 +254,9 @@ impl Transaction {
 
     pub fn replace_selection(&mut self, slice: Slice) -> &mut Self {
         let selection = self.selection();
+        if let Selection::Cell(cell) = &selection {
+            return self.replace_cell_selection(cell, slice);
+        }
         let empty = slice.content.child_count() == 0;
         if empty && selection == Selection::All {
             self.delete(0, self.doc().content().size());
@@ -302,6 +305,9 @@ impl Transaction {
             let marks = self.stored_marks.clone().unwrap_or_else(|| self.marks_for_range(from, to));
             node = node.with_marks(marks);
         }
+        if let Selection::Cell(cell) = &selection {
+            return self.replace_cell_selection(cell, Slice::new(Fragment::from_nodes(vec![node]), 0, 0));
+        }
         let bias = if node.is_inline() { -1 } else { 1 };
         let map_from = self.steps().len();
         self.replace_range_with(from, to, node);
@@ -311,6 +317,28 @@ impl Transaction {
 
     pub fn delete_selection(&mut self) -> &mut Self {
         self.replace_selection(Slice::empty())
+    }
+
+    fn replace_cell_selection(&mut self, cell: &CellSelection, slice: Slice) -> &mut Self {
+        let Ok(ranges) = cell.ranges(self.doc()) else { return self };
+        let end = cell.to(self.doc());
+        let start = self.steps().len();
+        let mut insert = slice;
+        for range in ranges {
+            let mapping = self.mapping().slice(start, self.steps().len());
+            self.replace(
+                mapping.map(range.from.pos, 1),
+                mapping.map(range.to.pos, 1),
+                std::mem::replace(&mut insert, Slice::empty()),
+            );
+        }
+        let end = self.mapping().slice(start, self.steps().len()).map(end, 1);
+        if let Some(selection) = self.doc().resolve(end).ok()
+            .and_then(|pos| Selection::find_from(&pos, -1, false))
+        {
+            self.set_selection(selection);
+        }
+        self
     }
 
     pub fn insert_text_at_selection(&mut self, text: &str) -> &mut Self {

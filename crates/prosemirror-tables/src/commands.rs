@@ -51,6 +51,9 @@ pub fn cell_around(pos: &ResolvedPos) -> Option<ResolvedPos> {
 }
 
 pub fn selected_rect(state: &EditorState) -> Option<TableRect> {
+    if let Selection::Cell(cells) = &state.selection {
+        return TableRect::from_cells(&state.doc, cells.anchor, cells.head);
+    }
     let pos = if let Selection::Node { anchor } = state.selection {
         anchor
     } else {

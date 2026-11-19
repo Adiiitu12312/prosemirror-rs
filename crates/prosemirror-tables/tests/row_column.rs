@@ -5,7 +5,7 @@ use std::sync::OnceLock;
 use prosemirror_model::{AttributeSpec, Schema};
 use prosemirror_schema_basic::{marks, nodes};
 use prosemirror_state::{EditorState, EditorStateConfig, Selection};
-use prosemirror_tables::commands::{TableEdit, TableRect};
+use prosemirror_tables::commands::TableEdit;
 use prosemirror_tables::{table_nodes, TableNodesOptions};
 use serde_json::{json, Value};
 
@@ -25,7 +25,6 @@ fn verify_case(index: usize) {
     let source = schema.node_from_json(&case["doc"]).unwrap();
     let selection = &case["selection"];
     let cell_selection = selection["type"] == "cell";
-    let anchor = selection["anchor"].as_u64().unwrap() as usize;
     let edit = match case["group"].as_str().unwrap() {
         "addColumnBefore" => TableEdit::AddColumnBefore,
         "addColumnAfter" => TableEdit::AddColumnAfter,
@@ -36,7 +35,9 @@ fn verify_case(index: usize) {
         name => panic!("unknown upstream table edit {name}"),
     };
     let editor_selection = if cell_selection {
-        Selection::near(&source.resolve(anchor).unwrap(), 1)
+        let anchor = selection["anchor"].as_u64().unwrap() as usize;
+        let head = selection["head"].as_u64().unwrap() as usize;
+        Selection::cell(&source, anchor, head).unwrap()
     } else {
         serde_json::from_value(selection.clone()).unwrap()
     };
@@ -48,14 +49,7 @@ fn verify_case(index: usize) {
         stored_marks: None,
     });
     let mut transaction = None;
-    let handled = if cell_selection {
-        let head = selection["head"].as_u64().unwrap() as usize;
-        let rect = TableRect::from_cells(&state.doc, anchor, head).unwrap();
-        transaction = edit.apply(state.tr(), rect);
-        transaction.is_some()
-    } else {
-        edit.run(&state, Some(&mut |tr| transaction = Some(tr)))
-    };
+    let handled = edit.run(&state, Some(&mut |tr| transaction = Some(tr)));
     let label = format!("{} / {}", case["group"], case["title"]);
     if case["expected"].is_null() {
         assert!(!handled, "{label}");
