@@ -60,8 +60,8 @@ pub(crate) fn schema(content: &str) -> Schema {
     let marks = [
         ("link", MarkSpec {
             attributes: [
-                ("href".into(), AttributeSpec::required()),
-                ("title".into(), AttributeSpec::with_default(Value::Null)),
+                ("href".into(), AttributeSpec::new(None, Some("string"))),
+                ("title".into(), AttributeSpec::new(Some(Value::Null), Some("string|null"))),
             ].into(),
             inclusive: false,
             ..MarkSpec::default()

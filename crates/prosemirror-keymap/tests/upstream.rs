@@ -1,4 +1,4 @@
-//! Port of prosemirror-keymap 1.2.3 test/test-keymap.ts.
+//! Upstream test/test-keymap.ts at 176de4152dca0e473f74504e8995d7a281392eb5.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -78,19 +78,25 @@ fn passes_state_dispatch_and_view() {
 }
 
 #[test]
-fn tries_shifted_characters_and_respects_the_tagged_keycode_guard() {
+fn tries_both_shifted_key_and_base_with_shift_modifier() {
     let (percent, count) = counter();
     let (shift_five, base_count) = counter();
-    let shift = Modifiers { shift: true, ..Modifiers::default() };
-    let map = keymap([("%", percent)], Platform::Other).unwrap();
-    assert!(click(&map, "%", shift, Some(53)));
+    let modifiers = Modifiers { ctrl: true, shift: true, ..Modifiers::default() };
+    let map = keymap([("Ctrl-%", percent)], Platform::Other).unwrap();
+    assert!(click(&map, "%", modifiers, Some(53)));
     assert_eq!(count.load(Ordering::Relaxed), 1);
+    let map = keymap([("Ctrl-Shift-5", shift_five)], Platform::Other).unwrap();
+    assert!(click(&map, "%", modifiers, Some(53)));
+    assert_eq!(base_count.load(Ordering::Relaxed), 1);
+}
 
-    // The original test still expected a Shift-only keyCode fallback. The tagged 1.2.3
-    // implementation requires Ctrl, Alt, or Meta for that fallback.
-    let map = keymap([("Shift-5", shift_five)], Platform::Other).unwrap();
-    assert!(!click(&map, "%", shift, Some(53)));
-    assert_eq!(base_count.load(Ordering::Relaxed), 0);
+#[test]
+fn shift_alone_does_not_fall_back_to_the_keycode() {
+    let (command, count) = counter();
+    let modifiers = Modifiers { shift: true, ..Modifiers::default() };
+    let map = keymap([("Shift-5", command)], Platform::Other).unwrap();
+    assert!(!click(&map, "%", modifiers, Some(53)));
+    assert_eq!(count.load(Ordering::Relaxed), 0);
 }
 
 #[test]
