@@ -79,3 +79,5 @@ npm test
 GitHub Actions compiles Rust and runs the workspace tests, doctests, differential fuzzer, and Clippy on Linux, macOS, and Windows. The browser jobs compile the WebAssembly view and run its Rust integration tests in headless Chrome and Firefox. The fuzzer compares application outcomes, document JSON, step maps, position mappings and deletion flags, and inverse steps with the pinned JavaScript oracle. A mismatch writes `repro_case_<iteration>.json`.
 
 The original Rust integration tests are registered in `crates/prosemirror-integration-tests`. Crate-specific tests live alongside the ports. Fixture-driven tests retain the upstream test names and evaluate the behavior in Rust against the upstream expectations.
+
+The native editor differential suite uses the same pinned ProseMirror packages. It checks document JSON, selection, stored marks, mapped decorations, and clipboard text after each scripted or seeded event. For native IME and touch it also compares the resulting transactions with the upstream model and asserts the native preedit and handle display state. The seeded replays drain undo history and verify the original document is restored exactly.
