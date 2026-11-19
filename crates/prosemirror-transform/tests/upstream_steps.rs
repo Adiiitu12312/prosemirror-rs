@@ -1,7 +1,8 @@
-//! Port of prosemirror-transform 1.10.2 test/test-step.ts and test/test-replace_step.ts.
+//! Port of prosemirror-transform 1.12.7 test/test-step.ts and test/test-replace_step.ts.
 
-use prosemirror_model::{Fragment, Mark, Node, Slice};
-use prosemirror_transform::{Step, StepResult, Transform};
+use prosemirror_model::{Fragment, Mark, Node, NodeSpec, Schema, Slice};
+use prosemirror_transform::{Mapping, Step, StepMap, StepResult, Transform};
+use serde_json::json;
 
 fn children(nodes: Vec<Node>) -> Fragment {
     Fragment::from_nodes(nodes)
@@ -110,4 +111,58 @@ fn a_structural_replace_step_rejects_overwriting_text() {
         step.apply(&original),
         StepResult::fail("Structure replace would overwrite content"),
     );
+}
+
+fn replacement_schema() -> Schema {
+    Schema::new(vec![
+        ("doc".into(), NodeSpec { content: Some("block+".into()), ..NodeSpec::default() }),
+        ("paragraph".into(), NodeSpec { group: Some("block".into()), content: Some("text*".into()), ..NodeSpec::default() }),
+        ("blockquote".into(), NodeSpec { group: Some("block".into()), content: Some("block+".into()), ..NodeSpec::default() }),
+    ], Vec::new())
+}
+
+#[test]
+fn verifies_that_the_inserted_content_fits() {
+    let schema = replacement_schema();
+    let doc = schema.node_from_json(&json!(document(vec![paragraph("a")]))).unwrap();
+    let wrapper = schema.node_type("blockquote").unwrap().create(None, None, None);
+    let mut transform = Transform::new(doc);
+    let step = Step::replace_around(1, 2, 1, 2, Slice::new(children(vec![wrapper]), 0, 0), 1, true);
+    assert_eq!(transform.step(step), Err("Content does not fit in gap".into()));
+}
+
+#[test]
+fn considers_slice_openness_when_verifying_content_fit() {
+    let schema = replacement_schema();
+    let doc = schema.node_from_json(&json!(document(vec![node("blockquote", vec![paragraph("x")])]))).unwrap();
+    let wrapper = schema.node_type("blockquote").unwrap().create(None, None, None);
+    let mut transform = Transform::new(doc.clone());
+    transform.step(Step::replace_around(0, 1, 1, 1, Slice::new(children(vec![wrapper]), 0, 1), 1, true)).unwrap();
+    assert_eq!(transform.doc, doc);
+}
+
+fn assert_drops_mapped_collapsed_range(pos: usize) {
+    let before = document(vec![paragraph("abcd")]);
+    let step = Step::replace_around(pos, pos, pos, pos, Slice::empty(), 0, true);
+    let StepResult::Ok(applied) = step.apply(&before) else { panic!("collapsed range applies") };
+    assert_eq!(applied, before);
+    assert_eq!(step.invert(&before).apply(&applied), StepResult::ok(before));
+    assert!(step.map(&Mapping::from_maps(vec![StepMap::single(pos, 0, 10)])).is_none());
+}
+
+#[test]
+fn drops_a_collapsed_range_mapped_over_an_insertion_at_0() {
+    assert_drops_mapped_collapsed_range(0);
+}
+
+#[test]
+fn drops_a_collapsed_range_mapped_over_an_insertion_at_5() {
+    assert_drops_mapped_collapsed_range(5);
+}
+
+#[test]
+fn a_mapped_structural_replace_step_retains_its_structure_flag() {
+    let step = Step::replace_structure(1, 2, Slice::empty());
+    let mapped = step.map(&StepMap::single(0, 0, 3)).unwrap();
+    assert!(matches!(mapped, Step::Replace { from: 4, to: 5, structure: true, .. }));
 }

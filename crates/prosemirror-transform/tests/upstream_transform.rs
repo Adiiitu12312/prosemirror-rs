@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use prosemirror_model::{AttributeSpec, Fragment, MarkSpec, Node, NodeRange, NodeSpec, Schema};
-use prosemirror_transform::{can_split, find_wrapping, lift_target, Mapping, MarkFilter, Step, Transform};
+use prosemirror_transform::{can_split, drop_point, find_wrapping, lift_target, Mapping, MarkFilter, Step, StepResult, Transform};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -158,6 +158,7 @@ impl Query {
                 json!(find_wrapping(&doc, &range, type_name(&args[1]), optional_attrs(&args[2]), inner.as_ref()))
             }
             "liftTarget" => json!(lift_target(&doc, &node_range(&args[0]))),
+            "dropPoint" => json!(drop_point(&doc, number(&args[0]), &schema.slice_from_json(&args[1]).expect("valid drop slice"))),
             "blockRange" => {
                 let from = doc.resolve(number(&args[0])).expect("valid starting position");
                 let to = doc.resolve(number(&args[1])).expect("valid end position");
@@ -237,6 +238,8 @@ struct Operation {
     args: Value,
     error: Option<String>,
     attrs_by_node: Option<Vec<(Value, Value)>>,
+    #[serde(default)]
+    result: Value,
 }
 
 impl Operation {
@@ -247,6 +250,14 @@ impl Operation {
         let node = |json| schema.node_from_json(json).expect("valid node JSON");
         let slice = |json| schema.slice_from_json(json).expect("valid slice JSON");
         match self.method.as_str() {
+            "changedRange" => {
+                let range = transform.changed_range().map(|range| json!({"from": range.start, "to": range.end}));
+                assert_eq!(json!(range), self.result);
+            }
+            "maybeStep" => {
+                let step = Step::from_json(schema, &args[0]).expect("valid step JSON");
+                assert_eq!(json!(matches!(transform.maybe_step(step), StepResult::Ok(_))), self.result);
+            }
             "addMark" => {
                 transform.add_mark(number(&args[0]), number(&args[1]), mark(&args[2]));
             }
@@ -342,11 +353,15 @@ impl Operation {
     }
 }
 
-fn run_case(index: usize) {
+fn corpus() -> &'static Corpus {
     static CORPUS: OnceLock<Corpus> = OnceLock::new();
-    let corpus = CORPUS.get_or_init(|| {
+    CORPUS.get_or_init(|| {
         serde_json::from_str(include_str!("upstream/cases.json")).expect("valid upstream test corpus")
-    });
+    })
+}
+
+fn run_case(index: usize) {
+    let corpus = corpus();
     let case = &corpus.cases[index];
     for query in &case.queries {
         query.check(&corpus.schemas[query.schema].build());
@@ -367,3 +382,6 @@ macro_rules! upstream_cases {
 }
 
 include!("upstream/coverage.rs");
+
+#[path = "upstream/invert.rs"]
+mod invert;

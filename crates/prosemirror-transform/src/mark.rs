@@ -22,7 +22,7 @@ pub(crate) fn add_mark(transform: &mut Transform, from: usize, to: usize, mark: 
         return;
     }
     let mark = bind_mark(&transform.doc, &mark);
-    let (mut removed, mut added) = (Vec::new(), Vec::new());
+    let mut added = Vec::new();
     transform.doc.nodes_between(from, to, |node, pos, parent, _| {
         if !node.is_inline() || mark.is_in_set(node.marks())
             || parent.is_some_and(|parent| !parent.allows_mark_type(&mark.type_name))
@@ -31,29 +31,20 @@ pub(crate) fn add_mark(transform: &mut Transform, from: usize, to: usize, mark: 
         }
         let start = pos.max(from);
         let end = (pos + node.node_size()).min(to);
-        let new_set = Mark::add_to_set(node.marks(), mark.clone());
-        for previous in node.marks() {
-            if !previous.is_in_set(&new_set) {
-                if let Some(Step::RemoveMark { to, mark, .. }) = removed.last_mut() {
-                    if *to == start && *mark == *previous {
-                        *to = end;
-                        continue;
-                    }
-                }
-                removed.push(Step::remove_mark(start, end, previous.clone()));
-            }
-        }
-        if let Some(Step::AddMark { to, .. }) = added.last_mut() {
-            if *to == start {
-                *to = end;
-                return true;
-            }
-        }
-        added.push(Step::add_mark(start, end, mark.clone()));
+        push_mark_step(&mut added, Step::add_mark(start, end, mark.clone()));
         true
     });
-    for step in removed.into_iter().chain(added) {
+    for step in added {
         transform.maybe_step(step);
+    }
+}
+
+pub(crate) fn push_mark_step(steps: &mut Vec<Step>, step: Step) {
+    match (steps.last_mut(), &step) {
+        (Some(Step::AddMark { to, mark, .. }), Step::AddMark { from, to: end, mark: next })
+        | (Some(Step::RemoveMark { to, mark, .. }), Step::RemoveMark { from, to: end, mark: next })
+            if *to == *from && *mark == *next => *to = *end,
+        _ => steps.push(step),
     }
 }
 
@@ -70,7 +61,7 @@ pub(crate) fn remove_mark(transform: &mut Transform, from: usize, to: usize, fil
     let mut matched: Vec<Matched> = Vec::new();
     let mut index = 0;
     transform.doc.nodes_between(from, to, |node, pos, _, _| {
-        if !node.is_inline() {
+        if !node.is_inline() || !node.is_atom() {
             return true;
         }
         index += 1;

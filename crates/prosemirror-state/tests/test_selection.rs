@@ -1,4 +1,4 @@
-// Ported from prosemirror-state 1.4.3, test/test-selection.ts and test/state.ts.
+// Ported from prosemirror-state 1.4.4, test/test-selection.ts and test/state.ts.
 use prosemirror_model::Node;
 use prosemirror_state::{EditorState, EditorStateConfig, Selection, Transaction};
 use prosemirror_test_builder::{blockquote, builders, doc, hr, p, test_schema, ChildSpec, TaggedDoc};
@@ -88,6 +88,26 @@ fn follows_changes() {
     state.apply(|tr| { tr.insert_text("zq", 1, 1); });
     assert_eq!(state.0.selection, Selection::cursor(5));
     state.apply(|tr| { tr.insert_text("uv", 7, 7); });
+    assert_eq!(state.0.selection, Selection::cursor(5));
+}
+
+#[test]
+fn explicit_text_insertion_keeps_a_distant_selection() {
+    let mut state = TestState::new(doc!(p!("a<a>bc<b>def")));
+    state.apply(|tr| { tr.insert_text("X", 6, 6); });
+    assert_eq!(state.0.doc, doc!(p!("abcdeXf")).node);
+    assert_eq!(state.0.selection, Selection::text(2, 4));
+
+    state.apply(|tr| { tr.insert_text("Y", 1, 1); });
+    assert_eq!(state.0.doc, doc!(p!("YabcdeXf")).node);
+    assert_eq!(state.0.selection, Selection::text(3, 5));
+}
+
+#[test]
+fn explicit_text_insertion_collapses_a_selection_ending_at_the_insert() {
+    let mut state = TestState::new(doc!(p!("a<a>bc<b>def")));
+    state.apply(|tr| { tr.insert_text("😀", 3, 4); });
+    assert_eq!(state.0.doc, doc!(p!("ab😀def")).node);
     assert_eq!(state.0.selection, Selection::cursor(5));
 }
 

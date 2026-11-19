@@ -12,15 +12,31 @@ pub fn lift_target(doc: &Node, range: &NodeRange) -> Option<usize> {
     let to = doc.resolve(range.end).ok()?;
     let parent = from.node(range.depth);
     let content = parent.content().cut_by_index(range.start_index, range.end_index);
+    let (mut content_before, mut content_after) = (0, 0);
     for depth in (0..=range.depth).rev() {
         let node = from.node(depth);
-        let index = from.index(depth);
-        let end_index = to.index_after(depth);
-        if depth < range.depth && node.can_replace(index, end_index, &content) {
-            return Some(depth);
+        let index = from.index(depth) + content_before;
+        let end_index = to.index_after(depth).checked_sub(content_after)?;
+        if depth < range.depth {
+            let fits = if index <= end_index {
+                node.can_replace(index, end_index, &content)
+            } else {
+                // A split retains the original child on both sides of the lift.
+                let suffix = node.content().cut_by_index(end_index, index);
+                node.can_replace(index, index, &content.append(&suffix))
+            };
+            if fits {
+                return Some(depth);
+            }
         }
         if depth == 0 || node.is_isolating() || !can_cut(node, index, end_index) {
             break;
+        }
+        if index > 0 {
+            content_before = 1;
+        }
+        if end_index < node.child_count() {
+            content_after = 1;
         }
     }
     None
@@ -321,22 +337,25 @@ pub fn drop_point(doc: &Node, pos: usize, slice: &Slice) -> Option<usize> {
             } else {
                 1
             };
-            let index = resolved.index(depth) + usize::from(direction > 0);
-            let parent = resolved.node(depth);
-            let fits = if pass == 0 {
-                parent.can_replace(index, index, content)
-            } else {
-                parent.content_match_at(index).zip(parent.schema())
-                    .and_then(|(matched, schema)| matched.find_wrapping(schema, content.children.first()?.type_name()))
-                    .and_then(|wrappers| wrappers.into_iter().next())
-                    .is_some_and(|outer| parent.can_replace_with(index, index, &outer, &[]))
-            };
-            if fits {
-                return Some(match direction {
-                    -1 => resolved.before(depth + 1),
-                    1 => resolved.after(depth + 1),
-                    _ => pos,
-                });
+            let sides = [Some(direction), (direction != 0).then_some(-direction)];
+            for direction in sides.into_iter().flatten() {
+                let index = resolved.index(depth) + usize::from(direction > 0);
+                let parent = resolved.node(depth);
+                let fits = if pass == 0 {
+                    parent.can_replace(index, index, content)
+                } else {
+                    parent.content_match_at(index).zip(parent.schema())
+                        .and_then(|(matched, schema)| matched.find_wrapping(schema, content.children.first()?.type_name()))
+                        .and_then(|wrappers| wrappers.into_iter().next())
+                        .is_some_and(|outer| parent.can_replace_with(index, index, &outer, &[]))
+                };
+                if fits {
+                    return Some(match direction {
+                        -1 => resolved.before(depth + 1),
+                        1 => resolved.after(depth + 1),
+                        _ => pos,
+                    });
+                }
             }
         }
     }

@@ -3,6 +3,7 @@
 use std::any::Any;
 use std::collections::HashMap;
 use std::fmt::Debug;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
 
 use prosemirror_model::{replace_at_pos, Fragment, Mark, ModelError, Node, Schema, Slice};
@@ -16,6 +17,16 @@ pub enum StepResult {
     Ok(Node),
     Failed(String),
 }
+
+/// How a pure insertion maps over another insertion at the same position.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ReplaceMapBias {
+    Before,
+    #[default]
+    After,
+}
+
+static REPLACE_MAP_BEFORE: AtomicBool = AtomicBool::new(false);
 
 impl StepResult {
     pub fn ok(doc: Node) -> Self {
@@ -70,6 +81,8 @@ pub enum Step {
     AddMark { from: usize, to: usize, mark: Mark },
     #[serde(rename = "removeMark")]
     RemoveMark { from: usize, to: usize, mark: Mark },
+    #[serde(rename = "markSet")]
+    MarkSet { steps: Vec<Step> },
     #[serde(rename = "addNodeMark")]
     AddNodeMark { pos: usize, mark: Mark },
     #[serde(rename = "removeNodeMark")]
@@ -110,7 +123,7 @@ fn registered_steps() -> &'static RwLock<HashMap<String, StepDecoder>> {
 }
 
 fn is_builtin_id(id: &str) -> bool {
-    matches!(id, "replace" | "replaceAround" | "addMark" | "removeMark"
+    matches!(id, "replace" | "replaceAround" | "addMark" | "removeMark" | "markSet"
         | "addNodeMark" | "removeNodeMark" | "attr" | "docAttr")
 }
 
@@ -178,6 +191,15 @@ fn is_false(value: &bool) -> bool {
 }
 
 impl Step {
+    /// Change the process-wide insertion mapping bias and return the previous setting.
+    pub fn set_replace_map_bias(bias: ReplaceMapBias) -> ReplaceMapBias {
+        if REPLACE_MAP_BEFORE.swap(bias == ReplaceMapBias::Before, Ordering::Relaxed) {
+            ReplaceMapBias::Before
+        } else {
+            ReplaceMapBias::After
+        }
+    }
+
     /// Register a schema-aware decoder for a custom step JSON ID.
     pub fn json_id(id: impl Into<String>, decode: StepDecoder) -> Result<(), ModelError> {
         use std::collections::hash_map::Entry;
@@ -213,6 +235,14 @@ impl Step {
         if !is_builtin_id(id) {
             return decode_custom(schema, id, json).map(Self::Custom);
         }
+        if id == "markSet" {
+            let steps = json["steps"].as_array().filter(|steps| steps.iter().all(|step| {
+                matches!(json_id(step), Some("addMark" | "removeMark"))
+            })).ok_or_else(|| ModelError::Serialization("Invalid JSON for MarkSetStep".into()))?;
+            return Ok(Self::MarkSet {
+                steps: steps.iter().map(|step| Self::from_json(schema, step)).collect::<Result<_, _>>()?,
+            });
+        }
         let mut step: Self = serde_json::from_value(json.clone())
             .map_err(|error| ModelError::Serialization(error.to_string()))?;
         match &mut step {
@@ -224,7 +254,7 @@ impl Step {
                 *mark = schema.mark_from_json(&json["mark"])?;
             }
             Self::Attr { .. } | Self::DocAttr { .. } => {}
-            Self::Custom(_) => unreachable!("custom steps are decoded through the registry"),
+            Self::MarkSet { .. } | Self::Custom(_) => unreachable!("decoded before the built-in step parser"),
         }
         Ok(step)
     }
@@ -336,6 +366,16 @@ impl Step {
                 let mark = crate::mark::bind_mark(doc, mark);
                 map_marks(doc, *from, *to, |node, _| mark.remove_exact_from_set(node.marks()))
             }
+            Self::MarkSet { steps } => {
+                let mut doc = doc.clone();
+                for step in steps {
+                    match step.apply(&doc) {
+                        StepResult::Ok(next) => doc = next,
+                        failed => return failed,
+                    }
+                }
+                StepResult::ok(doc)
+            }
             Self::AddNodeMark { pos, mark } => replace_node_markup(
                 doc, *pos, "No node at mark step's position",
                 |node| Ok(node.with_marks(Mark::add_to_set(node.marks(), crate::mark::bind_mark(doc, mark)))),
@@ -396,8 +436,19 @@ impl Step {
                     *structure,
                 )
             }
-            Self::AddMark { from, to, mark } => Self::remove_mark(*from, *to, mark.clone()),
-            Self::RemoveMark { from, to, mark } => Self::add_mark(*from, *to, mark.clone()),
+            Self::AddMark { from, to, mark } => invert_mark(doc, *from, *to, mark, true),
+            Self::RemoveMark { from, to, mark } => invert_mark(doc, *from, *to, mark, false),
+            Self::MarkSet { steps } => {
+                let mut inverted = Vec::with_capacity(steps.len());
+                for step in steps {
+                    match step.invert(doc) {
+                        // Keep the inverse serializable as a flat mark set for persisted history.
+                        Self::MarkSet { steps } => inverted.extend(steps),
+                        step => inverted.push(step),
+                    }
+                }
+                Self::MarkSet { steps: inverted }
+            }
             Self::AddNodeMark { pos, mark } => {
                 if let Some(node) = doc.node_at(*pos) {
                     let new_set = Mark::add_to_set(node.marks(), crate::mark::bind_mark(doc, mark));
@@ -428,15 +479,18 @@ impl Step {
     pub fn map(&self, mapping: &dyn Mappable) -> Option<Self> {
         let mut mapped = self.clone();
         match &mut mapped {
-            Self::Replace { from, to, structure, .. } => {
-                let left = mapping.map_result(*from, 1);
+            Self::Replace { from, to, .. } => {
                 let right = mapping.map_result(*to, -1);
+                let left = if *from == *to && REPLACE_MAP_BEFORE.load(Ordering::Relaxed) {
+                    right
+                } else {
+                    mapping.map_result(*from, 1)
+                };
                 if left.deleted_across() && right.deleted_across() {
                     return None;
                 }
                 *from = left.pos;
                 *to = left.pos.max(right.pos);
-                *structure = false;
             }
             Self::ReplaceAround { from, to, gap_from, gap_to, .. } => {
                 let left = mapping.map_result(*from, 1);
@@ -444,7 +498,7 @@ impl Step {
                 *gap_from = if *from == *gap_from { left.pos } else { mapping.map(*gap_from, -1) };
                 *gap_to = if *to == *gap_to { right.pos } else { mapping.map(*gap_to, 1) };
                 if (left.deleted_across() && right.deleted_across())
-                    || *gap_from < left.pos || *gap_to > right.pos
+                    || *gap_from < left.pos || *gap_to > right.pos || *gap_from > *gap_to
                 {
                     return None;
                 }
@@ -452,13 +506,19 @@ impl Step {
                 *to = right.pos;
             }
             Self::AddMark { from, to, .. } | Self::RemoveMark { from, to, .. } => {
-                let left = mapping.map_result(*from, 1);
-                let right = mapping.map_result(*to, -1);
-                if (left.deleted() && right.deleted()) || left.pos >= right.pos {
+                let left = mapping.map(*from, 1);
+                let right = mapping.map(*to, -1);
+                if left >= right {
                     return None;
                 }
-                *from = left.pos;
-                *to = right.pos;
+                *from = left;
+                *to = right;
+            }
+            Self::MarkSet { steps } => {
+                *steps = steps.iter().filter_map(|step| step.map(mapping)).collect();
+                if steps.is_empty() {
+                    return None;
+                }
             }
             Self::AddNodeMark { pos, .. } | Self::RemoveNodeMark { pos, .. } | Self::Attr { pos, .. } => {
                 let result = mapping.map_result(*pos, 1);
@@ -502,6 +562,30 @@ impl Step {
             _ => None,
         }
     }
+}
+
+fn invert_mark(doc: &Node, from: usize, to: usize, mark: &Mark, adding: bool) -> Step {
+    let mark = crate::mark::bind_mark(doc, mark);
+    let mut steps = Vec::new();
+    doc.nodes_between(from, to, |node, pos, _, _| {
+        if node.is_inline() && node.is_atom() {
+            let from = from.max(pos);
+            let to = to.min(pos + node.node_size());
+            if adding {
+                let added = Mark::add_to_set(node.marks(), mark.clone());
+                if added.as_slice() != node.marks() {
+                    crate::mark::push_mark_step(&mut steps, Step::remove_mark(from, to, mark.clone()));
+                    for previous in node.marks().iter().filter(|previous| !previous.is_in_set(&added)) {
+                        crate::mark::push_mark_step(&mut steps, Step::add_mark(from, to, previous.clone()));
+                    }
+                }
+            } else if mark.is_in_set(node.marks()) {
+                crate::mark::push_mark_step(&mut steps, Step::add_mark(from, to, mark.clone()));
+            }
+        }
+        true
+    });
+    if steps.len() == 1 { steps.pop().unwrap() } else { Step::MarkSet { steps } }
 }
 
 fn valid_range(doc: &Node, from: usize, to: usize) -> bool {

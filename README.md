@@ -10,9 +10,9 @@ A Rust port of [ProseMirror](https://prosemirror.net/) for native editors. The w
 | Module | Reference version | Rust implementation and tests |
 | --- | --- | --- |
 | `prosemirror-model` | 1.25.13 | Schema, content expressions, document tree, UTF-16 positions, marks, replacement, model DOM parsing and serialization |
-| `prosemirror-transform` | 1.10.2 | Built-in and registered custom steps, maps, slice fitting, structural transforms, and mark operations |
-| `prosemirror-state` | 1.4.3 | Selections, transactions, editor state, and plugin lifecycle |
-| `prosemirror-history` | 1.4.1 | Undo, redo, history grouping, and remapping |
+| `prosemirror-transform` | 1.12.7 | Built-in and registered custom steps, maps, slice fitting, structural transforms, and mark operations |
+| `prosemirror-state` | 1.4.4 | Selections, transactions, editor state, and plugin lifecycle |
+| `prosemirror-history` | 1.5.2 | Undo, redo, history grouping, remapping, and RopeSequence 1.3.4 |
 | `prosemirror-commands` | 1.6.2 | Editing commands and desktop base keymaps |
 | `prosemirror-schema-basic` | 1.2.3 | Basic node, mark, and DOM specifications |
 | `prosemirror-schema-list` | 1.4.1 | List specifications and editing commands |

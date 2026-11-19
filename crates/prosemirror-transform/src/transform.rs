@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use prosemirror_model::{ContentMatch, Fragment, Mark, Node, NodeRange, NodeType, Slice};
 use serde_json::Value;
 
@@ -28,6 +30,24 @@ impl Transform {
 
     pub fn doc_changed(&self) -> bool {
         !self.steps.is_empty()
+    }
+
+    /// The range in the resulting document covering this transform's replacements.
+    /// Mark and attribute changes have empty maps and do not extend the range.
+    pub fn changed_range(&self) -> Option<Range<usize>> {
+        let mut range: Option<Range<usize>> = None;
+        for map in &self.mapping.maps {
+            if let Some(range) = &mut range {
+                range.start = map.map(range.start, 1);
+                range.end = map.map(range.end, -1);
+            }
+            map.for_each(|_, _, from, to| {
+                let range = range.get_or_insert(from..to);
+                range.start = range.start.min(from);
+                range.end = range.end.max(to);
+            });
+        }
+        range
     }
 
     pub fn step(&mut self, step: Step) -> Result<(), String> {
@@ -169,15 +189,20 @@ impl Transform {
     }
 
     pub fn remove_node_mark(&mut self, pos: usize, mark: Mark) -> &mut Self {
-        self.maybe_step(Step::remove_node_mark(pos, mark));
+        let mark = mark::bind_mark(&self.doc, &mark);
+        if self.doc.node_at(pos).is_some_and(|node| mark.is_in_set(node.marks())) {
+            self.maybe_step(Step::remove_node_mark(pos, mark));
+        }
         self
     }
 
     pub fn remove_node_mark_type(&mut self, pos: usize, type_name: &str) -> &mut Self {
-        if let Some(mark) = self.doc.node_at(pos)
-            .and_then(|node| node.marks().iter().find(|mark| mark.type_name == type_name)).cloned()
-        {
-            self.remove_node_mark(pos, mark);
+        if let Some(node) = self.doc.node_at(pos) {
+            let steps: Vec<_> = node.marks().iter().rev().filter(|mark| mark.type_name == type_name)
+                .map(|mark| Step::remove_node_mark(pos, mark.clone())).collect();
+            for step in steps {
+                self.maybe_step(step);
+            }
         }
         self
     }

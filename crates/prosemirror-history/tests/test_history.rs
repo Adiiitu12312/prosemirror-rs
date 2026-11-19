@@ -1,6 +1,7 @@
-// Ported from prosemirror-history 1.4.1, test/test-history.ts.
+// Ported from prosemirror-history 1.5.2, test/test-history.ts.
 use prosemirror_history::{
-    close_history, history, redo, redo_depth, undo, undo_depth, HistoryOptions, HistoryState, HISTORY_KEY,
+    close_history, history, history_input, is_history_transaction, redo, redo_depth, undo, undo_depth,
+    HistoryInput, HistoryOptions, HistoryState, HISTORY_KEY,
 };
 use prosemirror_model::{Fragment, Node, Slice};
 use prosemirror_state::{EditorState, EditorStateConfig, Plugin, Selection, Transaction};
@@ -294,11 +295,56 @@ fn restores_selection_on_undo() {
     let selection = Selection::text(1, 3);
     edit(&mut state, |tr| { tr.set_selection(selection.clone()); });
     edit(&mut state, |tr| { tr.replace_with(1, 3, text("hello")); });
-    let selection2 = state.selection.clone();
     undo_once(&mut state);
     assert_eq!(state.selection, selection);
+}
+
+#[test]
+fn sets_the_selection_near_the_change_when_redoing() {
+    let mut state = state(Some(doc!(p!("abcd")).node), HistoryOptions::default(), vec![]);
+    type_text(&mut state, "[");
+    edit(&mut state, |tr| { tr.set_selection(Selection::cursor(6)); });
+    type_text(&mut state, "]");
+    assert_eq!(state.doc, doc!(p!("[abcd]")).node);
+    undo_once(&mut state);
+    undo_once(&mut state);
+    assert_eq!(state.doc, doc!(p!("abcd")).node);
     redo_once(&mut state);
-    assert_eq!(state.selection, selection2);
+    assert_eq!(state.doc, doc!(p!("[abcd")).node);
+    assert_eq!(state.selection.head(&state.doc), 2);
+}
+
+#[test]
+fn can_undo_mark_replacement() {
+    let marked = test_schema().node_from_json(&json!({"type":"doc", "content":[
+        {"type":"paragraph", "content":[{"type":"text", "text":"abc", "marks":[
+            {"type":"link", "attrs":{"href":"/a"}},
+        ]}]},
+    ]})).unwrap();
+    let mut state = state(Some(marked), HistoryOptions::default(), vec![]);
+    let link = state.schema.mark_type("link").unwrap().create(Some(json!({"href":"/b"})));
+    edit(&mut state, |tr| { tr.add_mark(1, 4, link); });
+    assert_eq!(state.doc.child(0).child(0).marks()[0].attrs.as_ref().unwrap()["href"], "/b");
+    undo_once(&mut state);
+    assert_eq!(state.doc.child(0).child(0).marks()[0].attrs.as_ref().unwrap()["href"], "/a");
+}
+
+#[test]
+fn history_input_respects_editability_and_tags_generated_transactions() {
+    let mut state = default_state();
+    type_text(&mut state, "abc");
+    assert!(!is_history_transaction(&state.tr()));
+    assert!(!history_input(&state, false, HistoryInput::Undo, |_| panic!("undo in read-only editor")));
+    let mut result = None;
+    assert!(history_input(&state, true, HistoryInput::Undo, |tr| result = Some(tr)));
+    let tr = result.take().unwrap();
+    assert!(is_history_transaction(&tr));
+    state = state.apply(&tr);
+    assert!(!history_input(&state, false, HistoryInput::Redo, |_| panic!("redo in read-only editor")));
+    assert!(history_input(&state, true, HistoryInput::Redo, |tr| result = Some(tr)));
+    let tr = result.take().unwrap();
+    assert!(is_history_transaction(&tr));
+    assert_eq!(tr.doc(), &doc!(p!("abc")).node);
 }
 
 #[test]
@@ -465,6 +511,39 @@ fn supports_rebasing() {
     assert_eq!(state.doc, doc!(p!("left base")).node);
     redo_once(&mut state);
     assert_eq!(state.doc, doc!(p!("left base right")).node);
+}
+
+#[test]
+fn rebasing_more_steps_than_the_branch_records_keeps_the_right_event() {
+    let initial = doc!(p!("base")).node;
+    let mut state = state(Some(initial.clone()), HistoryOptions::default(), vec![]);
+    let excluded = Step::replace(1, 1, Slice::new(text("x"), 0, 0));
+    edit(&mut state, |tr| {
+        tr.step(excluded.clone()).unwrap();
+        tr.set_meta("addToHistory", json!(false));
+    });
+    let after_excluded = state.doc.clone();
+    let tracked = Step::replace(6, 6, Slice::new(text("y"), 0, 0));
+    edit(&mut state, |tr| { tr.step(tracked.clone()).unwrap(); });
+    assert_eq!(state.doc, doc!(p!("xbasey")).node);
+    assert_eq!(undo_depth(&state), 1);
+
+    edit(&mut state, |tr| {
+        tr.step(tracked.invert(&after_excluded)).unwrap();
+        tr.step(excluded.invert(&initial)).unwrap();
+        tr.insert(1, text("R"));
+        tr.step(excluded.map(&tr.mapping().slice(2, 3)).unwrap()).unwrap();
+        tr.transform.mapping.set_mirror(1, 3);
+        tr.step(tracked.map(&tr.mapping().slice(1, 4)).unwrap()).unwrap();
+        tr.transform.mapping.set_mirror(0, 4);
+        tr.set_meta("addToHistory", json!(false)).set_meta("rebased", json!(2));
+    });
+
+    assert_eq!(state.doc, doc!(p!("Rxbasey")).node);
+    undo_once(&mut state);
+    assert_eq!(state.doc, doc!(p!("Rxbase")).node);
+    redo_once(&mut state);
+    assert_eq!(state.doc, doc!(p!("Rxbasey")).node);
 }
 
 #[test]

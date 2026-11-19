@@ -167,22 +167,18 @@ impl StepMap {
                     return MapResult::new(result, 0, None);
                 }
 
-                let mut del = if (pos as isize) == start {
-                    DEL_AFTER
-                } else if (pos as isize) == end {
-                    DEL_BEFORE
-                } else {
-                    DEL_ACROSS
-                };
-
-                let side_deleted = if assoc < 0 {
-                    (pos as isize) != start
-                } else {
-                    (pos as isize) != end
-                };
-
-                if side_deleted {
-                    del |= DEL_SIDE;
+                let mut del = 0;
+                if old_size != 0 {
+                    del = if (pos as isize) == start {
+                        DEL_AFTER
+                    } else if (pos as isize) == end {
+                        DEL_BEFORE
+                    } else {
+                        DEL_ACROSS
+                    };
+                    if (pos as isize) != if assoc < 0 { start } else { end } {
+                        del |= DEL_SIDE;
+                    }
                 }
 
                 let recover = if (pos as isize) == (if assoc < 0 { start } else { end }) {
@@ -297,18 +293,19 @@ impl Mapping {
 
     pub fn append_mapping(&mut self, mapping: &Mapping) {
         let start_size = self.maps.len();
-        for i in 0..mapping.maps.len() {
-            let mirr = mapping.get_mirror(i);
-            let target_mirror = mirr.and_then(|m| if m < i { Some(start_size + m) } else { None });
+        for i in mapping.from..mapping.to.min(mapping.maps.len()) {
+            let target_mirror = mapping.get_mirror(i).filter(|&m| mapping.from <= m && m < i)
+                .map(|m| start_size + (m - mapping.from));
             self.append_map(mapping.maps[i].clone(), target_mirror);
         }
     }
 
     pub fn append_mapping_inverted(&mut self, mapping: &Mapping) {
-        let total_size = self.maps.len() + mapping.maps.len();
-        for i in (0..mapping.maps.len()).rev() {
-            let mirr = mapping.get_mirror(i);
-            let target_mirror = mirr.and_then(|m| if m > i { Some(total_size - m - 1) } else { None });
+        let start_size = self.maps.len();
+        let end = mapping.to.min(mapping.maps.len());
+        for i in (mapping.from..end).rev() {
+            let target_mirror = mapping.get_mirror(i).filter(|&m| i < m && m < end)
+                .map(|m| start_size + (end - m - 1));
             self.append_map(mapping.maps[i].invert(), target_mirror);
         }
     }

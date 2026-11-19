@@ -1,20 +1,27 @@
 // Regenerate with Node 22.15+ from the repository root:
-// node crates/prosemirror-transform/tests/upstream/generate.mjs node_modules/.prosemirror-upstream/transform
-// The argument must be a checkout of ProseMirror/prosemirror-transform at 1.10.2.
+// node crates/prosemirror-transform/tests/upstream/generate.mjs node_modules/.prosemirror-upstream/transform-1.12.7
+// The source checkout and installed package must be prosemirror-transform 1.12.7.
+// An optional second argument points to a directory with isolated node_modules.
 import assert from "node:assert/strict";
 import {readFileSync, writeFileSync} from "node:fs";
 import {registerHooks, stripTypeScriptTypes} from "node:module";
 import {resolve} from "node:path";
 import {fileURLToPath, pathToFileURL} from "node:url";
-import {Fragment, Mark, MarkType, Node, NodeRange, NodeType, ResolvedPos, Slice} from "prosemirror-model";
-import * as transform from "prosemirror-transform";
-
-const upstream = process.argv[2];
-assert.ok(upstream, "Pass a local prosemirror-transform 1.10.2 checkout");
-const version = "1.10.2";
+const [, , upstream, packageRoot] = process.argv;
+const version = "1.12.7";
+assert.ok(upstream, `Pass a local prosemirror-transform ${version} checkout`);
 assert.equal(JSON.parse(readFileSync(resolve(upstream, "package.json"), "utf8")).version, version);
 const testsUrl = pathToFileURL(resolve(upstream, "test")).href + "/";
-const transformUrl = import.meta.resolve("prosemirror-transform");
+function moduleUrl(name) {
+  if (!packageRoot) return import.meta.resolve(name);
+  const packageDir = resolve(packageRoot, "node_modules", name);
+  const spec = JSON.parse(readFileSync(resolve(packageDir, "package.json"), "utf8"));
+  return pathToFileURL(resolve(packageDir, spec.module)).href;
+}
+const transformUrl = moduleUrl("prosemirror-transform");
+assert.equal(JSON.parse(readFileSync(new URL("../package.json", transformUrl), "utf8")).version, version);
+const transform = await import(transformUrl);
+const {Fragment, Mark, MarkType, Node, NodeRange, NodeType, ResolvedPos, Slice} = await import(moduleUrl("prosemirror-model"));
 const istUrl = "data:text/javascript," + encodeURIComponent(`
   import assert from "node:assert/strict";
   function ist(actual, expected, compare, message) {
@@ -30,6 +37,7 @@ const tracedExports = "data:text/javascript," + encodeURIComponent(`
   import * as original from ${JSON.stringify(transformUrl)};
   export * from ${JSON.stringify(transformUrl)};
   export function canSplit(...args) { return globalThis.traceQuery("canSplit", original.canSplit, args); }
+  export function dropPoint(...args) { return globalThis.traceQuery("dropPoint", original.dropPoint, args); }
   export function findWrapping(...args) { return globalThis.traceQuery("findWrapping", original.findWrapping, args); }
   export function liftTarget(...args) { return globalThis.traceQuery("liftTarget", original.liftTarget, args); }
 `);
@@ -103,7 +111,7 @@ function trace(tr) {
 }
 
 const methods = [
-  "addMark", "addNodeMark", "delete", "deleteRange", "insert", "join", "lift",
+  "addMark", "addNodeMark", "changedRange", "delete", "deleteRange", "insert", "join", "lift", "maybeStep",
   "removeMark", "removeNodeMark", "replace", "replaceRange", "replaceRangeWith",
   "setBlockType", "setDocAttribute", "setNodeAttribute", "setNodeMarkup", "split", "step", "wrap",
 ];
@@ -126,7 +134,10 @@ for (const method of methods) {
     operations.push(operation);
     suspended++;
     try {
-      return original.apply(this, args);
+      const result = original.apply(this, args);
+      if (method === "changedRange") operation.result = encode(result);
+      if (method === "maybeStep") operation.result = !!result.doc;
+      return result;
     } catch (error) {
       operation.error = error.message;
       throw error;
@@ -145,7 +156,7 @@ function recordQuery(method, doc, args, expected) {
 globalThis.traceQuery = (method, original, args) => {
   const result = original(...args);
   if (!current || suspended) return result;
-  if (method === "canSplit") recordQuery(method, args[0], args.slice(1).map(encode), result);
+  if (method === "canSplit" || method === "dropPoint") recordQuery(method, args[0], args.slice(1).map(encode), result ?? null);
   else {
     const [range, ...rest] = args;
     const expected = method === "findWrapping" && result
@@ -180,7 +191,7 @@ registerHooks({
     if (specifier === "ist") return {url: istUrl, shortCircuit: true};
     if (specifier === "./trans.js") return next("./trans.ts", context);
     if (specifier === "prosemirror-transform") return {url: tracedExports, shortCircuit: true};
-    if (!specifier.startsWith(".")) return next(import.meta.resolve(specifier), context);
+    if (!specifier.startsWith(".")) return next(moduleUrl(specifier), context);
     return next(specifier, context);
   },
   load(url, context, next) {
@@ -202,7 +213,7 @@ registerHooks({
   },
 });
 
-for (source of ["test-trans.ts", "test-structure.ts"]) {
+for (source of ["test-trans.ts", "test-structure.ts", "test-droppoint.ts"]) {
   await import(testsUrl + source);
 }
 assert.ok(cases.every(test => test.transforms.length || test.queries.length), "Each assertion needs a Rust case");
@@ -219,7 +230,7 @@ function testName(test) {
   return test.title.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/_$/, "");
 }
 writeFileSync(new URL("coverage.rs", import.meta.url), [
-  "// Generated by generate.mjs from upstream prosemirror-transform 1.10.2.",
+  `// Generated by generate.mjs from upstream prosemirror-transform ${version}.`,
   "upstream_cases! {",
   ...cases.map((test, index) => `    ${testName(test)} => ${index},`),
   "}",

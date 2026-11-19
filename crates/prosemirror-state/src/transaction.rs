@@ -389,10 +389,12 @@ impl Transaction {
         }
         let marks = self.stored_marks.clone().unwrap_or_else(|| self.marks_for_range(from, to));
         let text = self.text_node(text, marks);
+        let insertion_end = from.saturating_add(text.node_size());
         self.replace_range_with(from, to, text);
         let selection = self.selection();
-        if !selection.empty_in(self.doc()) {
-            if let Ok(to) = self.doc().resolve(selection.to(self.doc())) {
+        let to = selection.to(self.doc());
+        if !selection.empty_in(self.doc()) && to == insertion_end {
+            if let Ok(to) = self.doc().resolve(to) {
                 self.set_selection(Selection::near(&to, 1));
             }
         }

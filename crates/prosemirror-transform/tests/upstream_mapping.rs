@@ -1,4 +1,4 @@
-//! Port of prosemirror-transform 1.10.2 test/test-mapping.ts.
+//! Port of prosemirror-transform 1.12.7 test/test-mapping.ts.
 
 use prosemirror_transform::{Mapping, StepMap};
 
@@ -108,6 +108,68 @@ fn detects_deletions_around_a_position() {
     check_deletion(&[[2, 1, 0], [0, 2, 0]], 2, -1, "dba");
     check_deletion(&[[2, 1, 0], [0, 1, 0]], 2, -1, "a");
     check_deletion(&[[3, 1, 0], [0, 2, 0]], 2, -1, "db");
+}
+
+#[test]
+fn does_not_assign_deleted_flags_for_insertions() {
+    let map = mapping(&[[4, 0, 2]], None);
+    assert_eq!(map.map_result(4, -1).del_info, 0);
+    assert_eq!(map.map_result(4, 1).del_info, 0);
+}
+
+#[test]
+fn can_slice_a_mapping() {
+    let map = mapping(&[[0, 0, 1], [5, 2, 0], [1, 0, 4]], None);
+    assert_eq!(map.slice(1, 2).map(2, 1), 2);
+    assert_eq!(map.slice(0, 2).map(7, 1), 6);
+    assert_eq!(map.slice(1, 3).map(10, 1), 12);
+}
+
+#[test]
+fn can_append_a_sliced_mapping() {
+    let mut map = mapping(&[[3, 1, 2]], None);
+    map.append_mapping(&mapping(&[[0, 0, 1], [5, 2, 0], [1, 0, 4]], None).slice(1, 2));
+    assert_eq!(map.maps.len(), 2);
+    assert_eq!(map.map(7, 1), 6);
+}
+
+#[test]
+fn preserves_mirror_information_when_appending_sliced_mappings() {
+    let mut map = mapping(&[[3, 1, 2], [10, 1, 0]], None);
+    let mut other = mapping(&[[0, 0, 1], [0, 1, 0], [3, 1, 0], [3, 0, 1]], Some((0, 1)));
+    other.set_mirror(2, 3);
+    map.append_mapping(&other.slice(1, 4));
+    assert_eq!(map.get_mirror(2), None);
+    assert_eq!(map.get_mirror(3), Some(4));
+}
+
+#[test]
+fn can_invert_a_sliced_mapping() {
+    let map = mapping(&[[0, 0, 1], [5, 2, 0], [1, 0, 4]], None);
+    assert_eq!(map.slice(1, 2).invert().map(10, 1), 12);
+    assert_eq!(map.slice(0, 2).invert().map(10, 1), 11);
+    assert_eq!(map.slice(1, 3).invert().map(10, 1), 8);
+}
+
+#[test]
+fn inverting_a_prefix_uses_only_retained_mirror_positions() {
+    let source = mapping(&[[2, 4, 0], [2, 0, 4], [0, 0, 1], [1, 0, 1]], Some((0, 1)));
+    let sliced = source.slice(0, 2);
+    let inverted = sliced.invert();
+    // Upstream 1.12.7 uses the backing array length, yielding mirror [1,2]
+    // and mapping 4 to 6 even though index 2 is outside the two-step inverse.
+    assert_eq!(inverted.get_mirror(1), Some(0));
+    assert_eq!(inverted.map(sliced.map(4, 1), 1), 4);
+}
+
+#[test]
+fn appending_a_map_to_a_slice_does_not_mutate_the_source() {
+    let original = mapping(&[[0, 0, 1], [3, 2, 0]], None);
+    let mut slice = original.slice(1, 2);
+    slice.append_map(StepMap::single(5, 0, 1), Some(1));
+    assert_eq!(original.maps.len(), 2);
+    assert_eq!(original.get_mirror(1), None);
+    assert_eq!(slice.get_mirror(1), Some(2));
 }
 
 #[test]

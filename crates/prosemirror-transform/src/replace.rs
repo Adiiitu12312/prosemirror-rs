@@ -76,7 +76,7 @@ impl<'a> Fitter<'a> {
         while self.unplaced.size() > 0 {
             if let Some(fittable) = self.find_fittable() {
                 self.place_nodes(fittable)?;
-            } else if !self.open_more()? {
+            } else if !self.open_more() {
                 self.drop_node()?;
             }
         }
@@ -175,17 +175,16 @@ impl<'a> Fitter<'a> {
         None
     }
 
-    fn open_more(&mut self) -> Option<bool> {
-        let inner = content_at(&self.unplaced.content, self.unplaced.open_start)?;
-        if inner.children.first().is_none_or(Node::is_leaf) {
-            return Some(false);
+    fn open_more(&mut self) -> bool {
+        let slice = &mut self.unplaced;
+        if max_open(&slice.content, true) <= slice.open_start {
+            return false;
         }
-        let open_start = self.unplaced.open_start;
-        if inner.size() + open_start >= self.unplaced.content.size() - self.unplaced.open_end {
-            self.unplaced.open_end = self.unplaced.open_end.max(open_start + 1);
+        if slice.size() > 1 && max_open(&slice.content, false) > slice.open_end {
+            slice.open_end += 1;
         }
-        self.unplaced.open_start += 1;
-        Some(true)
+        slice.open_start += 1;
+        true
     }
 
     fn drop_node(&mut self) -> Option<()> {
@@ -242,27 +241,27 @@ impl<'a> Fitter<'a> {
         if !to_end {
             open_end = -1;
         }
-        self.placed = add_to_fragment(&self.placed, fit.frontier_depth, &Fragment::from_nodes(added))?;
+        let added = Fragment::from_nodes(added);
+        self.placed = add_to_fragment(&self.placed, fit.frontier_depth, &added)?;
         frontier.matched = matched;
         if to_end && open_end < 0 && self.depth() > 0
             && fit.parent.as_ref().is_some_and(|parent| parent.type_name() == self.frontier[self.depth()].node.type_name())
         {
             self.close_frontier_node()?;
         }
-        let mut right = fragment;
-        for _ in 0..open_end {
-            let node = right.children.last()?;
+        for node in std::iter::successors(added.last_child(), |node| node.last_child())
+            .take(open_end.max(0) as usize)
+        {
             self.frontier.push(Frontier {
                 node: node.clone(),
                 matched: node.content_match_at(node.child_count())?,
             });
-            right = node.content();
         }
 
         self.unplaced = if !to_end {
             Slice::new(
                 drop_from_fragment(&slice.content, fit.slice_depth, taken)?,
-                slice.open_start,
+                fit.slice_depth,
                 slice.open_end,
             )
         } else if fit.slice_depth == 0 {
@@ -535,8 +534,27 @@ pub(crate) fn replace_range_with(transform: &mut Transform, from: usize, to: usi
     replace_range(transform, from, to, Slice::new(singleton(node), 0, 0));
 }
 
-pub(crate) fn delete_range(transform: &mut Transform, from: usize, to: usize) {
-    let (Ok(start), Ok(end)) = (transform.doc.resolve(from), transform.doc.resolve(to)) else { return };
+pub(crate) fn delete_range(transform: &mut Transform, mut from: usize, mut to: usize) {
+    let (Ok(mut start), Ok(mut end)) = (transform.doc.resolve(from), transform.doc.resolve(to)) else { return };
+    if start.parent().is_textblock() && end.parent().is_textblock()
+        && start.start(start.depth) != end.start(end.depth)
+        && start.parent_offset == 0 && end.parent_offset == 0
+    {
+        let shared = start.shared_depth(to);
+        let isolating = |pos: &ResolvedPos| (shared + 1..=pos.depth).any(|depth| pos.node(depth).is_isolating());
+        if !isolating(&start) && !isolating(&end) {
+            for depth in (1..=start.depth).rev() {
+                if from != start.start(depth) { break }
+                from = start.before(depth);
+            }
+            for depth in (1..=end.depth).rev() {
+                if to != end.start(depth) { break }
+                to = end.before(depth);
+            }
+            let (Ok(next_start), Ok(next_end)) = (transform.doc.resolve(from), transform.doc.resolve(to)) else { return };
+            (start, end) = (next_start, next_end);
+        }
+    }
     let covered = covered_depths(&start, &end);
     for (index, depth) in covered.iter().copied().enumerate() {
         let last = index + 1 == covered.len();
@@ -584,4 +602,14 @@ fn covered_depths(from: &ResolvedPos, to: &ResolvedPos) -> Vec<usize> {
         }
     }
     covered
+}
+
+fn max_open(mut fragment: &Fragment, from_left: bool) -> usize {
+    let mut count = 0;
+    loop {
+        let child = if from_left { fragment.first_child() } else { fragment.last_child() };
+        let Some(child) = child.filter(|node| !node.is_atom()) else { return count };
+        count += 1;
+        fragment = child.content();
+    }
 }
