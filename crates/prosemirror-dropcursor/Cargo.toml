@@ -1,0 +1,15 @@
+[package]
+name = "prosemirror-dropcursor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ProseMirror drop cursor for native editor hosts"
+
+[dependencies]
+prosemirror-model.workspace = true
+prosemirror-transform.workspace = true
+prosemirror-view.workspace = true
+
+[dev-dependencies]
+prosemirror-schema-basic.workspace = true
+serde_json.workspace = true

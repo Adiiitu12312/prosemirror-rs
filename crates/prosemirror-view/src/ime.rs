@@ -15,6 +15,12 @@ pub struct ImeHandler {
     pub state: ImeState,
 }
 
+impl Default for ImeHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ImeHandler {
     pub fn new() -> Self {
         Self {

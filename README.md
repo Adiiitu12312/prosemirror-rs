@@ -21,6 +21,7 @@ A Rust port of [ProseMirror](https://prosemirror.net/). The workspace contains t
 | `prosemirror-keymap` | 1.2.3 | Key normalization and command dispatch |
 | `prosemirror-inputrules` | 1.5.0 | Text input rules, rule builders, and undo |
 | `prosemirror-gapcursor` | 1.4.0 | Gap selection, navigation, and native event hooks |
+| `prosemirror-dropcursor` | 1.8.2 | Drop target mapping, timing, and host-supplied geometry |
 | `prosemirror-view` | 1.42.9 | Decoration trees, decoration mapping, and portable clipboard logic |
 
 The model, transform, state, history, commands, list, test-builder, and collaboration suites carry cases from the corresponding upstream test files. The view ports cover the decoration data structures and clipboard behavior. The upstream browser `EditorView`, DOM observer, rendering, event, and browser selection suites remain open, as do upstream extension packages absent from the workspace.

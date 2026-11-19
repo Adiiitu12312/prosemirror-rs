@@ -9,6 +9,7 @@ members = [
     "crates/prosemirror-keymap",
     "crates/prosemirror-inputrules",
     "crates/prosemirror-gapcursor",
+    "crates/prosemirror-dropcursor",
     "crates/prosemirror-commands",
     "crates/prosemirror-schema-basic",
     "crates/prosemirror-schema-list",
