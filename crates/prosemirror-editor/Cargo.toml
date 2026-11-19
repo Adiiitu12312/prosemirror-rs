@@ -1,0 +1,22 @@
+[package]
+name = "prosemirror-editor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Renderer-agnostic native ProseMirror editor"
+
+[dependencies]
+prosemirror-commands.workspace = true
+prosemirror-keymap.workspace = true
+prosemirror-model.workspace = true
+prosemirror-state.workspace = true
+prosemirror-transform.workspace = true
+prosemirror-view.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+unicode-segmentation.workspace = true
+
+[dev-dependencies]
+prosemirror-test-builder.workspace = true
+prosemirror-history.workspace = true
+prosemirror-inputrules.workspace = true

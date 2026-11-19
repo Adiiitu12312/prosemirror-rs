@@ -29,6 +29,7 @@ A Rust port of [ProseMirror](https://prosemirror.net/) for native editors. The w
 | `prosemirror-menu` | 1.3.0 | Native and browser menus, dropdowns, focus navigation, and stock commands |
 | `prosemirror-example-setup` | 1.2.3 | Standard input rules, key bindings, menus, prompts, and plugin configuration |
 | `prosemirror-view` | 1.42.9 | Native and browser editor controllers, decoration trees, DOM reconciliation, and clipboard logic |
+| `prosemirror-editor` | View 1.42.9 | Native event controller and versioned renderer interface |
 | `prosemirror-fuzz` | — | Rust and JavaScript differential test harness |
 | `prosemirror-integration-tests` | — | Workspace integration tests |
 
@@ -39,6 +40,18 @@ The model, transform, state, history, commands, list, test-builder, collaboratio
 The default workspace build is native-first and has no browser dependencies. Enable a crate's `browser` Cargo feature on `wasm32-unknown-unknown` to use its existing browser adapter. The CI browser jobs enable `browser-tests` explicitly.
 
 Positions and internal text edits use UTF-16 code units. The model exposes `Node::text_utf16()` for exact access to isolated surrogate code units. Rust UTF-8, DOM text, and JSON APIs represent those isolated units with replacement characters.
+
+## Native editor and host interface
+
+`prosemirror-editor` wraps an `EditorState` in an `Editor<H>` where `H` implements `Host`. Send typed keyboard, composition, pointer, touch, clipboard, focus, scroll, or drag events through `Editor::handle`. An application can dispatch transactions directly, install direct and plugin view props, and register native node view factories. State plugins continue to own transaction filtering and appending.
+
+Host interface version 1 is exposed as `HOST_INTERFACE_VERSION`. Positions use UTF-16 code units and each host chooses its coordinate units. The host first measures the display list via `Host::update_layout` and then draws it via `Host::draw`. `BlockUpdate` supplies the previous and current changed top-level block index ranges. Hosts can reuse layout outside those ranges and reconcile paint-only changes from the current display list. The display list carries blocks, shaped-text inputs with marks, decorations, widgets, selections, composition, and drag feedback.
+
+- `Layout` supplies caret and point hit testing, visual line boxes, block bounds, selection rectangles, and preedit caret placement. The host owns Unicode text shaping and maps grapheme clusters and bidirectional visual runs to editor positions.
+- `Host` connects clipboard, IME candidate positioning, cursor icons, focus, viewport scrolling, and a structured accessibility outline. Display geometry uses a single coordinate space. A windowed host translates its pointer and IME coordinates at the platform boundary.
+- `NodeView` supports native controllers with update, selection, event filtering, mutation filtering, and destruction callbacks. Direct view props take precedence over view plugin props and attached state plugin props.
+
+The clipboard codec writes plain text and an opaque native slice envelope with its open depths intact. Browser-specific parsing and selection behavior remain in the opt-in browser adapter.
 
 ## Verification
 

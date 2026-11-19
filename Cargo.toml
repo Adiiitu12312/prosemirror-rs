@@ -21,6 +21,7 @@ members = [
     "crates/prosemirror-schema-list",
     "crates/prosemirror-test-builder",
     "crates/prosemirror-view",
+    "crates/prosemirror-editor",
     "crates/prosemirror-fuzz",
     "crates/prosemirror-integration-tests",
 ]
@@ -52,3 +53,4 @@ prosemirror-schema-basic = { path = "crates/prosemirror-schema-basic" }
 prosemirror-schema-list = { path = "crates/prosemirror-schema-list" }
 prosemirror-test-builder = { path = "crates/prosemirror-test-builder" }
 prosemirror-view = { path = "crates/prosemirror-view" }
+prosemirror-editor = { path = "crates/prosemirror-editor" }
