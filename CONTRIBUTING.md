@@ -15,5 +15,5 @@ Thank you for your interest in contributing to `prosemirror-rs`.
    ```bash
    node oracle/test_oracle.js
    ```
-2. Verify Rust compilation and tests in GitHub Actions across Linux, macOS, and Windows and in the headless Chrome WebAssembly job.
+2. Verify Rust compilation and tests in GitHub Actions across Linux, macOS, and Windows and in the Chrome and Firefox WebAssembly jobs.
 3. If introducing changes to step application or position mapping, run the fuzzer with a high iteration count.

@@ -193,11 +193,17 @@ impl PluginView for Lifecycle {
 fn creates_and_destroys_plugin_views() {
     let events = Rc::new(RefCell::new(Vec::new()));
     let observed = events.clone();
-    let view = mount(doc!(p!()), BrowserViewProps {
+    let key = PluginKey::new("lifecycle");
+    let state = state(doc!(p!())).reconfigure(vec![Plugin::new(key.clone(), None)]).unwrap();
+    let props = Rc::new(BrowserViewProps {
         plugin_views: vec![Rc::new(move |_| {
             observed.borrow_mut().push("create");
             Box::new(Lifecycle(observed.clone()))
         })],
+        ..BrowserViewProps::default()
+    });
+    let view = mount_state(state, BrowserViewProps {
+        state_plugins: [(key, props)].into(),
         ..BrowserViewProps::default()
     });
     edit(&view, |tr| { tr.insert_text_at_selection("u"); });

@@ -4,7 +4,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use prosemirror_model::{DomOutputSpec, Fragment, NodeSpec, Schema};
-use prosemirror_state::{Selection, Transaction};
+use prosemirror_state::{Plugin, PluginKey, Selection, Transaction};
 use prosemirror_test_builder::{blockquote, doc, em_text as em, h1, hr, p, strong_text as strong, test_schema, TaggedDoc};
 use prosemirror_view::browser::{BrowserViewProps, GetPos, NodeView, WidgetView, WidgetViewFactory};
 use prosemirror_view::{Decoration, DecorationAttrs, DecorationGroup, DecorationSet};
@@ -13,7 +13,7 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen_test::wasm_bindgen_test;
 use web_sys::{Element, HtmlElement};
 
-use crate::support::{mount, TestView};
+use crate::support::{mount, mount_state, state, TestView};
 
 fn attrs(pairs: &[(&str, &str)]) -> DecorationAttrs {
     pairs.iter().map(|(name, val)| ((*name).into(), (*val).into())).collect()
@@ -130,17 +130,17 @@ fn updates_multilevel_wrapping_decorations() {
 #[wasm_bindgen_test]
 fn draws_overlapping_inline_decorations() {
     let (view, _) = setup(doc!(p!("abcdef")), vec![inline(3, 5, "foo"), inline(4, 6, "bar"), inline(1, 7, "baz")]);
-    let baz = all(&view, ".baz");
-    assert_eq!(contents(&baz), ["ab", "c", "d", "e", "f"]);
+    let decorated = all(&view, ".baz");
+    assert_eq!(contents(&decorated), ["ab", "c", "d", "e", "f"]);
     let classes = |node: &Element| {
         let class = node.class_name();
         let mut names: Vec<_> = class.split_whitespace().collect();
         names.sort_unstable();
         names.join(" ")
     };
-    assert_eq!(classes(&baz[1]), "baz foo");
-    assert_eq!(classes(&baz[2]), "bar baz foo");
-    assert_eq!(classes(&baz[3]), "bar baz");
+    assert_eq!(classes(&decorated[1]), "baz foo");
+    assert_eq!(classes(&decorated[2]), "bar baz foo");
+    assert_eq!(classes(&decorated[3]), "bar baz");
 }
 
 #[wasm_bindgen_test]
@@ -178,11 +178,22 @@ fn draws_widgets_on_node_boundaries() {
 
 #[wasm_bindgen_test]
 fn draws_decorations_from_multiple_plugins() {
-    let props = BrowserViewProps {
-        decorations: vec![Rc::new(|state| Some(DecorationSet::create(&state.doc, vec![widget(6, 2)])))],
-        ..BrowserViewProps::default()
+    let plugin = |key, pos, id| {
+        let key = PluginKey::new(key);
+        let props = Rc::new(BrowserViewProps {
+            decorations: vec![Rc::new(move |state| Some(DecorationSet::create(&state.doc, vec![widget(pos, id)])))],
+            widgets: [(id, widget_element("button", Some("ω")))].into(),
+            ..BrowserViewProps::default()
+        });
+        (key, props)
     };
-    let (view, _) = setup_with(doc!(p!("foo", em("bar"))), vec![widget(2, 1)], props);
+    let sources = [plugin("first", 2, 1), plugin("second", 6, 2)];
+    let state_plugins = sources.iter().map(|(key, _)| Plugin::new(key.clone(), None)).collect();
+    let state = state(doc!(p!("foo", em("bar")))).reconfigure(state_plugins).unwrap();
+    let view = mount_state(state, BrowserViewProps {
+        state_plugins: sources.into(),
+        ..BrowserViewProps::default()
+    });
     assert_eq!(all(&view, "button").len(), 2);
 }
 
@@ -320,9 +331,9 @@ fn updates_a_text_node_around_a_widget() {
 fn updates_a_text_node_with_an_inline_decoration() {
     let (view, set) = setup(doc!(p!("bar")), vec![inline(1, 3, "foo")]);
     edit(&view, &set, vec![], &[], |tr| { tr.delete(1, 2); });
-    let foo = one(&view, ".foo");
-    assert_eq!(foo.text_content().unwrap(), "a");
-    assert_eq!(foo.next_sibling().unwrap().text_content().unwrap(), "r");
+    let decorated = one(&view, ".foo");
+    assert_eq!(decorated.text_content().unwrap(), "a");
+    assert_eq!(decorated.next_sibling().unwrap().text_content().unwrap(), "r");
 }
 
 #[wasm_bindgen_test]

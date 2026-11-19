@@ -10,7 +10,7 @@ A Rust port of [ProseMirror](https://prosemirror.net/). The workspace contains t
 | Module | Reference version | Rust implementation and tests |
 | --- | --- | --- |
 | `prosemirror-model` | 1.24.1 | Schema, content expressions, document tree, UTF-16 positions, marks, replacement, model DOM parsing and serialization |
-| `prosemirror-transform` | 1.10.2 | Built-in steps, maps, slice fitting, structural transforms, and mark operations |
+| `prosemirror-transform` | 1.10.2 | Built-in and registered custom steps, maps, slice fitting, structural transforms, and mark operations |
 | `prosemirror-state` | 1.4.3 | Selections, transactions, editor state, and plugin lifecycle |
 | `prosemirror-history` | 1.4.1 | Undo, redo, history grouping, and remapping |
 | `prosemirror-commands` | 1.6.2 | Editing commands and desktop base keymaps |
@@ -45,6 +45,6 @@ npm ci
 npm test
 ```
 
-GitHub Actions compiles Rust and runs the workspace tests, doctests, differential fuzzer, and Clippy on Linux, macOS, and Windows. A separate job compiles the WebAssembly view with Clippy and runs its Rust integration tests in headless Chrome. The fuzzer compares application outcomes, document JSON, step maps, position mappings and deletion flags, and inverse steps with the pinned JavaScript oracle. A mismatch writes `repro_case_<iteration>.json`.
+GitHub Actions compiles Rust and runs the workspace tests, doctests, differential fuzzer, and Clippy on Linux, macOS, and Windows. The browser jobs compile the WebAssembly view and run its Rust integration tests in headless Chrome and Firefox. The fuzzer compares application outcomes, document JSON, step maps, position mappings and deletion flags, and inverse steps with the pinned JavaScript oracle. A mismatch writes `repro_case_<iteration>.json`.
 
 The original Rust integration tests are registered in `crates/prosemirror-integration-tests`. Crate-specific tests live alongside the ports. Fixture-driven tests retain the upstream test names and evaluate the behavior in Rust against the upstream expectations.

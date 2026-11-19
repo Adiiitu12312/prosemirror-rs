@@ -70,8 +70,12 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
 
   browser:
-    name: Browser view (Chrome)
+    name: Browser view (${{ matrix.browser }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chrome, firefox]
     steps:
       - uses: actions/checkout@v4
 
@@ -83,12 +87,26 @@ jobs:
       - uses: taiki-e/install-action@wasm-pack
 
       - name: Check the browser view
+        if: matrix.browser == 'chrome'
         run: cargo clippy -p prosemirror-view --target wasm32-unknown-unknown --test browser -- -D warnings
 
       - name: Run the Rust browser tests
         if: ${{ !cancelled() }}
+        env:
+          TEST_BROWSER: ${{ matrix.browser }}
         run: |
-          if [[ -n "$CHROMEWEBDRIVER" ]]; then
-            export CHROMEDRIVER="$CHROMEWEBDRIVER/chromedriver"
-          fi
-          wasm-pack test --headless --chrome crates/prosemirror-view --test browser
+          case "$TEST_BROWSER" in
+            chrome)
+              if [[ -n "$CHROMEWEBDRIVER" ]]; then
+                export CHROMEDRIVER="$CHROMEWEBDRIVER/chromedriver"
+              fi
+              ;;
+            firefox)
+              if [[ -n "$GECKOWEBDRIVER" ]]; then
+                export GECKODRIVER="$GECKOWEBDRIVER/geckodriver"
+              fi
+              export WASM_BINDGEN_TEST_WEBDRIVER_JSON="$RUNNER_TEMP/firefox.json"
+              printf '%s\n' '{"moz:firefoxOptions":{"prefs":{"focusmanager.testmode":true}}}' > "$WASM_BINDGEN_TEST_WEBDRIVER_JSON"
+              ;;
+          esac
+          wasm-pack test --headless "--$TEST_BROWSER" crates/prosemirror-view --test browser
