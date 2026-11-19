@@ -57,7 +57,7 @@ impl InputMatch<'_> {
     }
 }
 
-type Handler = dyn Fn(&EditorState, &InputMatch<'_>, usize, usize) -> Option<Transaction> + Send + Sync;
+type Handler = dyn Fn(&EditorState, &InputMatch<'_>, usize, usize, &str) -> Option<Transaction> + Send + Sync;
 
 #[derive(Clone)]
 pub struct InputRule {
@@ -97,6 +97,19 @@ impl InputRule {
         flags: &str,
         options: InputRuleOptions,
         handler: impl Fn(&EditorState, &InputMatch<'_>, usize, usize) -> Option<Transaction>
+            + Send + Sync + 'static,
+    ) -> Result<Self, regress::Error> {
+        Self::new_with_text(pattern, flags, options, move |state, matched, start, end, _| {
+            handler(state, matched, start, end)
+        })
+    }
+
+    /// Construct a rule whose handler also receives the text that triggered it.
+    pub fn new_with_text(
+        pattern: &str,
+        flags: &str,
+        options: InputRuleOptions,
+        handler: impl Fn(&EditorState, &InputMatch<'_>, usize, usize, &str) -> Option<Transaction>
             + Send + Sync + 'static,
     ) -> Result<Self, regress::Error> {
         let parsed = Flags::from(flags);
@@ -216,9 +229,22 @@ fn run(
     }
     let pos = state.doc.resolve(from).ok()?;
     let in_code = pos.parent().node_type().is_some_and(|kind| kind.spec.code);
-    let in_code_mark = pos.marks().iter().any(|mark| {
+    let code_mark = |mark: &prosemirror_model::Mark| {
         state.schema.mark_type(&mark.type_name).is_some_and(|kind| kind.spec.code)
-    });
+    };
+    let stored_marks = if state.selection.from() == from && state.selection.to(&state.doc) == to {
+        state.stored_marks.as_deref()
+    } else {
+        None
+    };
+    let in_code_mark = if let Some(marks) = stored_marks {
+        marks.iter().any(code_mark)
+    } else if from == to {
+        pos.marks().iter().any(code_mark)
+    } else {
+        let end = state.doc.resolve(to).ok()?;
+        pos.marks_across(&end).is_some_and(|marks| marks.iter().any(code_mark))
+    };
     let text_before = pos.parent().text_between_with(
         pos.parent_offset.saturating_sub(MAX_MATCH),
         pos.parent_offset,
@@ -242,7 +268,17 @@ fn run(
         else {
             continue;
         };
-        let Some(mut tr) = (rule.handler)(state, &matched, start, to) else {
+        if !rule.options.in_code_mark {
+            let mut covered_code_mark = false;
+            state.doc.nodes_between(start, from, |node, _, _, _| {
+                covered_code_mark |= node.is_inline() && node.marks().iter().any(code_mark);
+                !covered_code_mark
+            });
+            if covered_code_mark {
+                continue;
+            }
+        }
+        let Some(mut tr) = (rule.handler)(state, &matched, start, to, text) else {
             continue;
         };
         if rule.options.undoable {

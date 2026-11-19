@@ -41,8 +41,19 @@ pub fn wrapping_input_rule(
     attrs: Attrs,
     join: Option<JoinPredicate>,
 ) -> Result<InputRule, regress::Error> {
+    wrapping_input_rule_with_options(pattern, flags, type_name, attrs, join, InputRuleOptions::default())
+}
+
+pub fn wrapping_input_rule_with_options(
+    pattern: &str,
+    flags: &str,
+    type_name: impl Into<String>,
+    attrs: Attrs,
+    join: Option<JoinPredicate>,
+    options: InputRuleOptions,
+) -> Result<InputRule, regress::Error> {
     let type_name = type_name.into();
-    InputRule::new(pattern, flags, InputRuleOptions::default(), move |state, matched, start, end| {
+    InputRule::new(pattern, flags, options, move |state, matched, start, end| {
         let mut tr = state.tr();
         tr.delete(start, end);
         let pos = tr.doc().resolve(start).ok()?;
@@ -68,8 +79,18 @@ pub fn textblock_type_input_rule(
     type_name: impl Into<String>,
     attrs: Attrs,
 ) -> Result<InputRule, regress::Error> {
+    textblock_type_input_rule_with_options(pattern, flags, type_name, attrs, InputRuleOptions::default())
+}
+
+pub fn textblock_type_input_rule_with_options(
+    pattern: &str,
+    flags: &str,
+    type_name: impl Into<String>,
+    attrs: Attrs,
+    options: InputRuleOptions,
+) -> Result<InputRule, regress::Error> {
     let type_name = type_name.into();
-    InputRule::new(pattern, flags, InputRuleOptions::default(), move |state, matched, start, end| {
+    InputRule::new(pattern, flags, options, move |state, matched, start, end| {
         let pos = state.doc.resolve(start).ok()?;
         let depth = pos.depth.checked_sub(1)?;
         let parent = pos.node(depth);

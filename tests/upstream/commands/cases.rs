@@ -1,4 +1,4 @@
-// Cases from the pinned upstream test/test-commands.ts.
+// Cases from prosemirror-commands 1.7.2 test/test-commands.ts.
 
 #[path = "../command_support.rs"]
 mod support;
@@ -664,4 +664,14 @@ fn selecttextblockstart_and_selecttextblockend_can_move_the_cursor_when_the_sele
 #[test]
 fn selecttextblockstart_and_selecttextblockend_can_move_the_cursor_when_the_selection_crosses_multiple_text_blocks() {
     verify_case(131);
+}
+
+#[test]
+fn splitblock_can_handle_selection_deletion_dropping_wrapper_nodes() {
+    verify_case(132);
+}
+
+#[test]
+fn togglemark_includes_whitespace_when_asked() {
+    verify_case(133);
 }

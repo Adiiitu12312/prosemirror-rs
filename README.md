@@ -13,15 +13,15 @@ A Rust port of [ProseMirror](https://prosemirror.net/) for native editors. The w
 | `prosemirror-transform` | 1.12.7 | Built-in and registered custom steps, maps, slice fitting, structural transforms, and mark operations |
 | `prosemirror-state` | 1.4.4 | Selections, transactions, editor state, and plugin lifecycle |
 | `prosemirror-history` | 1.5.2 | Undo, redo, history grouping, remapping, and RopeSequence 1.3.4 |
-| `prosemirror-commands` | 1.6.2 | Editing commands and desktop base keymaps |
+| `prosemirror-commands` | 1.7.2 | Editing commands and desktop base keymaps |
 | `prosemirror-schema-basic` | 1.2.3 | Basic node, mark, and DOM specifications |
 | `prosemirror-schema-list` | 1.4.1 | List specifications and editing commands |
 | `prosemirror-test-builder` | 1.1.1 | Document builders, mark builders, and named positions |
 | `prosemirror-collab` | 1.3.1 | Client step queue, remote changes, rebasing, and synchronization |
 | `prosemirror-keymap` | 1.2.3 | Key normalization and command dispatch |
-| `prosemirror-inputrules` | 1.5.0 | Text input rules, rule builders, and undo |
+| `prosemirror-inputrules` | 1.7.0 | Text input rules, rule builders, and undo |
 | `prosemirror-gapcursor` | 1.4.0 | Gap selection, navigation, and browser cursor rendering |
-| `prosemirror-dropcursor` | 1.8.2 | Drop target mapping, timing, and browser overlays |
+| `prosemirror-dropcursor` | 1.8.4 native / 1.8.2 browser | Drop target mapping, timing, and opt-in browser overlays |
 | `prosemirror-tables` | 1.8.5 | Table schema, grid mapping, cell selection and editing, clipboard, and browser column resizing |
 | `prosemirror-changeset` | 2.4.0 | Changed ranges, span merging, token diffs, and change simplification |
 | `prosemirror-markdown` | 1.13.4 | Markdown schema, parsing, and serialization |

@@ -1,4 +1,4 @@
-//! Port of prosemirror-dropcursor@1.8.2/src/dropcursor.ts.
+//! Native drop cursor behavior from prosemirror-dropcursor@1.8.4.
 
 #[cfg(all(target_arch = "wasm32", feature = "browser"))]
 mod browser;
@@ -60,6 +60,7 @@ pub struct DropCursor {
     options: DropCursorOptions,
     cursor: Option<usize>,
     remove_at: Option<u64>,
+    drag_slice: Option<Slice>,
 }
 
 impl DropCursor {
@@ -72,13 +73,30 @@ impl DropCursor {
     }
 
     pub fn drag_over(&mut self, doc: &Node, event: DragOver<'_>, disabled: impl FnOnce(&Node, DropPosition) -> bool) {
-        let Some(target) = event.target.filter(|target| event.editable && target.pos <= doc.content().size())
-            else { return };
-        if target.inside.and_then(|inside| doc.node_at(inside)).is_some_and(|node| disabled(node, target)) {
+        if !event.editable {
             return;
         }
-        self.cursor = Some(event.dragging.and_then(|slice| drop_point(doc, target.pos, slice)).unwrap_or(target.pos));
-        self.schedule_removal(event.time_ms, 5_000);
+        self.drag_slice = event.dragging.cloned();
+        if let Some(target) = drop_target(doc, event.target, self.drag_slice.as_ref(), disabled) {
+            self.cursor = Some(target);
+            self.schedule_removal(event.time_ms, 5_000);
+        }
+    }
+
+    /// Recompute the overlay after a document edit during an active drag.
+    /// Supply a fresh hit test of the last pointer coordinates.
+    pub fn update_drag(
+        &mut self, doc: &Node, target: Option<DropPosition>,
+        disabled: impl FnOnce(&Node, DropPosition) -> bool,
+    ) {
+        if self.cursor.is_some() {
+            self.cursor = drop_target(doc, target, self.drag_slice.as_ref(), disabled);
+        }
+    }
+
+    /// Remove the active overlay when the native drop cursor is detached.
+    pub fn destroy(&mut self) {
+        self.clear();
     }
 
     pub fn drag_end(&mut self, time_ms: u64) {
@@ -110,6 +128,7 @@ impl DropCursor {
     pub fn clear(&mut self) {
         self.cursor = None;
         self.remove_at = None;
+        self.drag_slice = None;
     }
 
     fn schedule_removal(&mut self, time_ms: u64, delay: u64) {
@@ -150,4 +169,17 @@ impl DropCursor {
             class: self.options.class.as_deref(),
         })
     }
+}
+
+fn drop_target(
+    doc: &Node, target: Option<DropPosition>, slice: Option<&Slice>,
+    disabled: impl FnOnce(&Node, DropPosition) -> bool,
+) -> Option<usize> {
+    let target = target.filter(|target| target.pos <= doc.content().size())?;
+    if target.inside.and_then(|inside| doc.node_at(inside)).is_some_and(|node| {
+        node.node_type().is_some_and(|kind| kind.spec.disable_drop_cursor) || disabled(node, target)
+    }) {
+        return None;
+    }
+    Some(slice.and_then(|slice| drop_point(doc, target.pos, slice)).unwrap_or(target.pos))
 }

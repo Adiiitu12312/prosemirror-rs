@@ -1,4 +1,4 @@
-// Expectations verified against the published prosemirror-inputrules 1.5.0 package.
+// Expectations verified against the published prosemirror-inputrules 1.7.0 package.
 use prosemirror_inputrules::{
     ellipsis, em_dash, input_rules, smart_quotes, textblock_type_input_rule, undo_input_rule,
     wrapping_input_rule, Attrs, InCode, InputRule, InputRuleOptions,
@@ -139,6 +139,67 @@ fn custom_handlers_see_named_captures_and_global_match_position() {
     assert_eq!(typed(&state, "").unwrap().doc, doc!(p!("bX")).node);
     assert!(typed(&state, "").is_none());
     assert_eq!(typed(&state, "").unwrap().doc, doc!(p!("bX")).node);
+}
+
+#[test]
+fn handlers_receive_the_text_typed_to_trigger_the_rule() {
+    let rule = InputRule::new_with_text(r"x!$", "", InputRuleOptions::default(), |state, matched, from, to, typed| {
+        assert_eq!(matched.text(), "x!");
+        assert_eq!(typed, "!");
+        assert_eq!((from, to), (1, 2));
+        let mut tr = state.tr();
+        tr.insert_text("X", from, to);
+        Some(tr)
+    }).unwrap();
+    let state = create(doc!(p!("x")).node, vec![rule]);
+    assert_eq!(typed(&state, "!").unwrap().doc, doc!(p!("X")).node);
+}
+
+#[test]
+fn skips_a_match_covering_code_and_honors_stored_code_marks() {
+    let base = test_schema();
+    let marks = base.mark_specs().update("code", MarkSpec { code: true, ..Default::default() }, None);
+    let schema = Schema::from_ordered_maps(base.node_specs().clone(), marks, Some("doc")).unwrap();
+    let code = schema.mark_type("code").unwrap().create(None);
+    let make_state = |text, rules| {
+        let doc = schema.node_from_json(&json!({
+            "type": "doc", "content": [{"type": "paragraph", "content": text}]
+        })).unwrap();
+        EditorState::create(EditorStateConfig {
+            schema: schema.clone(),
+            selection: Some(Selection::at_end(&doc)),
+            doc: Some(doc),
+            plugins: vec![input_rules(rules)],
+            stored_marks: None,
+        })
+    };
+    let rule = InputRule::replace(r"xy!$", "", "X",
+        InputRuleOptions { in_code_mark: false, ..Default::default() }).unwrap();
+    let state = make_state(json!([
+        {"type": "text", "text": "x", "marks": [{"type": "code"}]},
+        {"type": "text", "text": "y"}
+    ]), vec![rule.clone()]);
+    assert!(typed(&state, "!").is_none());
+
+    let state = make_state(json!([{"type": "text", "text": "xy"}]), vec![rule]);
+    assert!(typed(&state, "!").is_some());
+    let mut tr = state.tr();
+    tr.set_stored_marks(Some(vec![code]));
+    assert!(typed(&state.apply(&tr), "!").is_none());
+}
+
+#[test]
+fn passes_rule_options_to_both_structural_builders() {
+    use prosemirror_inputrules::{textblock_type_input_rule_with_options, wrapping_input_rule_with_options};
+    let options = InputRuleOptions { undoable: false, ..Default::default() };
+    let wrap = wrapping_input_rule_with_options(r"^> $", "", "blockquote", Attrs::default(), None, options).unwrap();
+    let heading = textblock_type_input_rule_with_options(r"^# $", "", "heading", Attrs::default(), options).unwrap();
+    for (prefix, rule, name) in [(">", wrap, "blockquote"), ("#", heading, "heading")] {
+        let state = create(doc!(p!(prefix)).node, vec![rule]);
+        let next = typed(&state, " ").unwrap();
+        assert_eq!(next.doc.first_child().unwrap().type_name(), name);
+        assert!(!undo_input_rule(&next, |_| panic!("the rule is not undoable")));
+    }
 }
 
 #[test]

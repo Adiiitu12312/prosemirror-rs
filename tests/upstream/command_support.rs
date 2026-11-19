@@ -76,6 +76,7 @@ fn run(command: &Value, state: &EditorState, dispatch: commands::DispatchFn<'_>)
             let options = commands::ToggleMarkOptions {
                 remove_when_present: args[2]["removeWhenPresent"].as_bool().unwrap_or(true),
                 enter_inline_atoms: args[2]["enterInlineAtoms"].as_bool().unwrap_or(true),
+                include_whitespace: args[2]["includeWhitespace"].as_bool().unwrap_or(false),
             };
             commands::toggle_mark_with_options(name(), attrs(), options)(state, dispatch)
         }

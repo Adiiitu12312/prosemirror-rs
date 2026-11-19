@@ -385,8 +385,7 @@ pub fn split_block_as(
     split_node: impl Fn(&Node, bool, &ResolvedPos) -> Option<Node>,
 ) -> impl for<'a> Fn(&EditorState, DispatchFn<'a>) -> bool {
     move |state, dispatch| {
-        let (Ok(from), Ok(to)) = (state.doc.resolve(state.selection.from()), state.doc.resolve(state.selection.to(&state.doc)))
-            else { return false };
+        let Ok(from) = state.doc.resolve(state.selection.from()) else { return false };
         if matches!(state.selection, Selection::Node { .. }) && from.node_after().is_some_and(|node| node.is_block()) {
             if from.parent_offset == 0 || !can_split(&state.doc, from.pos, 1, None) {
                 return false;
@@ -395,6 +394,15 @@ pub fn split_block_as(
             tr.apply_transform(|transform| { transform.split(from.pos, 1); });
             return dispatch_scrolled(tr, dispatch);
         }
+        if from.depth == 0 {
+            return false;
+        }
+        let mut tr = state.tr();
+        if !state.selection.empty_in(&state.doc) && matches!(state.selection, Selection::Text { .. } | Selection::All) {
+            tr.delete_selection();
+        }
+        let map_from = tr.steps().len();
+        let Ok(from) = tr.doc().resolve(tr.selection().from()) else { return false };
         let Some(block_depth) = (1..=from.depth).rev().find(|&depth| from.node(depth).is_block()) else { return false };
         let inline_depth = from.depth - block_depth;
         let at_end = from.end(block_depth) == from.pos + inline_depth;
@@ -404,13 +412,8 @@ pub fn split_block_as(
         let default = default_block_at(state, parent, from.index_after(parent_depth));
         let default_node = default.map(|kind| kind.create(None, None, None));
         let mut types = vec![None; inline_depth + 1];
-        types[0] = split_node(to.parent(), at_end, &from).or_else(|| if at_end { default_node.clone() } else { None });
-
-        let mut tr = state.tr();
-        if !matches!(state.selection, Selection::Node { .. }) {
-            tr.delete_selection();
-        }
-        let pos = tr.mapping().map(from.pos, 1);
+        types[0] = split_node(from.parent(), at_end, &from).or_else(|| if at_end { default_node.clone() } else { None });
+        let pos = from.pos;
         if !can_split(tr.doc(), pos, types.len(), Some(&types)) {
             types[0] = default_node;
             if !can_split(tr.doc(), pos, types.len(), Some(&types)) {
@@ -420,7 +423,7 @@ pub fn split_block_as(
         tr.apply_transform(|transform| { transform.split_with_types(pos, types.len(), Some(&types)); });
         if !at_end && at_start {
             if let Some(kind) = default.filter(|kind| kind.name != from.node(block_depth).type_name()) {
-                let pos = tr.mapping().map(from.before(block_depth), 1);
+                let pos = tr.mapping().slice(map_from, tr.steps().len()).map(from.before(block_depth), 1);
                 if let Ok(first) = tr.doc().resolve(pos) {
                     let index = first.index(first.depth);
                     if parent.can_replace_with(index, index + 1, &kind.name, &[]) {
@@ -577,11 +580,12 @@ pub fn set_block_type(type_name: &str, attrs: Option<Value>) -> impl for<'a> Fn(
 pub struct ToggleMarkOptions {
     pub remove_when_present: bool,
     pub enter_inline_atoms: bool,
+    pub include_whitespace: bool,
 }
 
 impl Default for ToggleMarkOptions {
     fn default() -> Self {
-        Self { remove_when_present: true, enter_inline_atoms: true }
+        Self { remove_when_present: true, enter_inline_atoms: true, include_whitespace: false }
     }
 }
 
@@ -631,7 +635,11 @@ pub fn toggle_mark_with_options(
         if add {
             let Ok(mark) = kind.try_create(attrs.clone()) else { return false };
             for (from, to) in ranges {
-                let (from, to) = whitespace_trimmed_range(doc, from, to);
+                let (from, to) = if options.include_whitespace {
+                    (from, to)
+                } else {
+                    whitespace_trimmed_range(doc, from, to)
+                };
                 tr.add_mark(from, to, mark.clone());
             }
         } else {

@@ -64,3 +64,26 @@ fn respects_node_disabling_and_drag_leave() {
     cursor.drag_leave(false);
     assert_eq!(cursor.position(), None);
 }
+
+#[test]
+fn recomputes_the_active_drop_target_after_an_edit() {
+    let doc = doc();
+    let mut cursor = DropCursor::default();
+    let slice = doc.slice(0, 3, false).unwrap();
+    cursor.drag_over(&doc, DragOver { dragging: Some(&slice), ..over(1, Some(0), 0) }, |_, _| false);
+    assert_eq!(cursor.position(), Some(0));
+    cursor.update_drag(&doc, Some(DropPosition { pos: 5, inside: Some(3) }), |_, _| false);
+    assert_eq!(cursor.position(), Some(6));
+    cursor.update_drag(&doc, None, |_, _| false);
+    assert_eq!(cursor.position(), None);
+}
+
+#[test]
+fn removing_the_plugin_clears_an_active_overlay() {
+    let doc = doc();
+    let mut cursor = DropCursor::default();
+    cursor.drag_over(&doc, over(1, Some(0), 0), |_, _| false);
+    cursor.destroy();
+    assert!(cursor.overlay(&doc, &Layout).is_none());
+    assert_eq!(cursor.position(), None);
+}
