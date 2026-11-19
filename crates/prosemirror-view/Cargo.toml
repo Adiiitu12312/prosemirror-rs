@@ -3,7 +3,7 @@ name = "prosemirror-view"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-description = "Native ProseMirror view architecture built on Parley, AccessKit, and cosmic-text"
+description = "Native ProseMirror view controller, decorations, clipboard, layout, and input"
 
 [dependencies]
 prosemirror-model = { workspace = true }

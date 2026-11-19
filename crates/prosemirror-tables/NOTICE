@@ -1,0 +1,10 @@
+The table selection-range expansion in src/cell_commands.rs is adapted from
+prosemirror-tables 1.8.5 src/utils/selection-range.ts. That file credits the
+original get-selection-range-in-column and get-selection-range-in-row
+implementations to Atlassian under the Apache License, Version 2.0.
+
+The upstream files retain the original source links.
+https://github.com/ProseMirror/prosemirror-tables/blob/v1.8.5/src/utils/selection-range.ts
+https://bitbucket.org/atlassian/atlassian-frontend-mirror/src/5f91cb871e8248bc3bae5ddc30bb9fd9200fadbb/editor/editor-tables/src/utils/
+
+See LICENSE-APACHE for the license text.

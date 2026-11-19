@@ -30,7 +30,7 @@ A Rust port of [ProseMirror](https://prosemirror.net/). The workspace contains t
 | `prosemirror-example-setup` | 1.2.3 | Standard input rules, key bindings, menus, and native plugin configuration |
 | `prosemirror-view` | 1.42.9 | Native editor controller, decoration trees, and portable clipboard logic |
 
-The model, transform, state, history, commands, list, test-builder, and collaboration suites carry cases from the corresponding upstream test files. The view ports cover the decoration data structures and clipboard behavior. The upstream browser `EditorView`, DOM observer, rendering, event, and browser selection suites remain open, as do upstream extension packages absent from the workspace.
+The model, transform, state, history, commands, list, test-builder, collaboration, Markdown, search, changeset, and table suites carry cases from the corresponding upstream test files. The view suites cover decoration and clipboard behavior. The native view and menu take rendering, coordinates, and events from a host. Upstream browser `EditorView`, DOM observation, drawing, and browser selection suites remain open.
 
 Positions and internal text edits use UTF-16 code units. The model exposes `Node::text_utf16()` for exact access to isolated surrogate code units. Rust UTF-8, DOM text, and JSON APIs represent those isolated units with replacement characters.
 

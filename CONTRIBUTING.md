@@ -7,7 +7,7 @@ Thank you for your interest in contributing to `prosemirror-rs`.
 1. **Parity First**: The JavaScript ProseMirror reference implementation is authoritative. Any discrepancy in JSON formatting, position mapping, or step application between Rust and JS is treated as a defect.
 2. **Differential Verification**: All modifications to `model`, `transform`, or `state` must pass differential fuzzing against `oracle/server.js`.
 3. **No DOM/Browser Assumptions**: The core engine must remain free of Web APIs, Chromium dependencies, and DOM assumptions. Native rendering is managed through `prosemirror-view`.
-4. **Clean Room Implementation**: Code should be clean, idiomatic Rust adhering to Rust API guidelines.
+4. **Source and test parity**. Use the pinned upstream implementation as the reference. Preserve source attribution and keep corresponding upstream test cases identifiable in Rust.
 
 ## Submitting Pull Requests
 

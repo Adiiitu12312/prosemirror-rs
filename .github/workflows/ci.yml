@@ -54,7 +54,16 @@ jobs:
         run: cargo test --workspace --doc
 
       - name: Run ProseMirror Differential Fuzzer
+        id: fuzz
         run: cargo run --bin prosemirror-fuzz -- --iterations 200 --oracle oracle/server.js
+
+      - name: Save Differential Fuzzer Failure
+        if: ${{ failure() && steps.fuzz.outcome == 'failure' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: repro-${{ matrix.os }}
+          path: repro_case_*.json
+          if-no-files-found: ignore
 
       - name: Cargo Clippy
         if: ${{ !cancelled() }}
