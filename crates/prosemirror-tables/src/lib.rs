@@ -1,3 +1,4 @@
+pub mod commands;
 pub mod fixtables;
 pub mod schema;
 pub mod tablemap;

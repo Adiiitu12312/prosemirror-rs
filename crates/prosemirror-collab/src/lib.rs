@@ -7,7 +7,10 @@ use std::hash::BuildHasher;
 use std::sync::Arc;
 
 use prosemirror_model::ModelError;
-use prosemirror_state::{EditorState, Plugin, PluginKey, Selection, StateField, Transaction};
+use prosemirror_state::{
+    EditorState, EditorStateConfig, Plugin, PluginKey, Selection, StateField, Transaction,
+    TypedStateField,
+};
 use prosemirror_transform::{Step, StepResult, Transform};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -16,6 +19,8 @@ use thiserror::Error;
 use storage::StoredCollab;
 
 pub const COLLAB_KEY: &str = "collab$";
+const ORIGINS_META: &str = "collabOrigins$";
+type Origins = Arc<[Arc<Transaction>]>;
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(untagged)]
@@ -131,6 +136,44 @@ impl StateField for CollabField {
     }
 }
 
+struct OriginField;
+
+impl OriginField {
+    fn restored(state: &EditorState) -> Origins {
+        stored(state).and_then(|local| local.unconfirmed_after(0, &state.schema, None))
+            .map(|pending| pending.into_iter().map(|item| item.origin).collect())
+            .unwrap_or_default()
+    }
+}
+
+impl TypedStateField for OriginField {
+    type Value = Origins;
+
+    fn init(&self, _: &EditorStateConfig, state: &EditorState) -> Self::Value {
+        Self::restored(state)
+    }
+
+    fn apply(
+        &self, tr: &Transaction, value: &Origins, old: &EditorState, new: &EditorState,
+    ) -> Self::Value {
+        self.apply_shared(&Arc::new(tr.clone()), value, old, new)
+    }
+
+    fn apply_shared(
+        &self, tr: &Arc<Transaction>, value: &Origins, _: &EditorState, new: &EditorState,
+    ) -> Self::Value {
+        if let Some(origins) = tr.get_typed_meta::<Origins>(ORIGINS_META) {
+            Arc::clone(origins)
+        } else if tr.get_meta(COLLAB_KEY).is_some() {
+            Self::restored(new)
+        } else if tr.doc_changed() {
+            value.iter().cloned().chain(std::iter::repeat_n(Arc::clone(tr), tr.steps().len())).collect()
+        } else {
+            Arc::clone(value)
+        }
+    }
+}
+
 pub fn collab(config: CollabConfig) -> Plugin {
     let client = config.client_id.unwrap_or_else(|| {
         let random = RandomState::new().hash_one(std::process::id());
@@ -139,7 +182,7 @@ pub fn collab(config: CollabConfig) -> Plugin {
     let mut plugin = Plugin::new(
         PluginKey { name: COLLAB_KEY.into() },
         Some(Arc::new(CollabField { version: config.version })),
-    );
+    ).with_typed_state_field(OriginField);
     plugin.spec.insert("historyPreserveItems".into(), Value::Bool(true));
     plugin.spec.insert("config".into(), json!({
         "version": config.version,
@@ -162,6 +205,10 @@ fn stored(state: &EditorState) -> Result<StoredCollab, CollabError> {
     Ok(serde_json::from_value(state.clone())?)
 }
 
+fn live_origins(state: &EditorState) -> Option<&[Arc<Transaction>]> {
+    state.get_typed_plugin_state::<Origins>(COLLAB_KEY).map(Arc::as_ref)
+}
+
 pub fn receive_transaction(
     state: &EditorState,
     steps: &[Step],
@@ -177,10 +224,10 @@ pub fn receive_transaction(
     let ours = client_ids.iter().take_while(|client| client.matches(&id)).count();
     let mut tr = state.tr();
     let remote = &steps[ours..];
-    let unconfirmed = local.unconfirmed_after(ours, &state.schema)?;
+    let unconfirmed = local.unconfirmed_after(ours, &state.schema, live_origins(state))?;
 
-    let updated = if remote.is_empty() {
-        StoredCollab::from_unconfirmed(version, &unconfirmed)
+    let unconfirmed = if remote.is_empty() {
+        unconfirmed
     } else {
         let mut outcome = Ok(Vec::new());
         tr.apply_transform(|transform| {
@@ -196,9 +243,11 @@ pub fn receive_transaction(
         }
         tr.set_meta("rebased", Value::from(unconfirmed.len()))
             .set_meta("addToHistory", Value::Bool(false));
-        StoredCollab::from_unconfirmed(version, &outcome)
+        outcome
     };
-    tr.set_meta(COLLAB_KEY, updated.into_value());
+    let origins = unconfirmed.iter().map(|item| Arc::clone(&item.origin)).collect::<Origins>();
+    let updated = StoredCollab::from_unconfirmed(version, &unconfirmed);
+    tr.set_meta(COLLAB_KEY, updated.into_value()).set_typed_meta(ORIGINS_META, origins);
     Ok(tr)
 }
 
@@ -212,7 +261,7 @@ pub struct SendableSteps {
 
 pub fn sendable_steps(state: &EditorState) -> Result<Option<SendableSteps>, CollabError> {
     let local = stored(state)?;
-    let unconfirmed = local.unconfirmed_after(0, &state.schema)?;
+    let unconfirmed = local.unconfirmed_after(0, &state.schema, live_origins(state))?;
     if unconfirmed.is_empty() {
         return Ok(None);
     }

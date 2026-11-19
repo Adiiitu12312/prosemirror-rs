@@ -128,7 +128,7 @@ impl EditorState {
 
         let root = Arc::new(tr.clone());
         let mut transactions = vec![Arc::clone(&root)];
-        let mut state = self.apply_inner(tr);
+        let mut state = self.apply_inner(&root);
         if self.plugins.iter().all(|plugin| plugin.append_transaction.is_none()) {
             return ApplyTransactionResult { state, transactions };
         }
@@ -144,8 +144,9 @@ impl EditorState {
                     if let Some(mut appended) = append(&transactions[*count..], old_state, &state) {
                         if state.filter_transaction(&appended, Some(index)) {
                             appended.set_appended_transaction(Arc::clone(&root));
+                            let appended = Arc::new(appended);
                             state = state.apply_inner(&appended);
-                            transactions.push(Arc::new(appended));
+                            transactions.push(appended);
                             have_new = true;
                         }
                     }
@@ -168,7 +169,7 @@ impl EditorState {
         })
     }
 
-    fn apply_inner(&self, tr: &Transaction) -> Self {
+    fn apply_inner(&self, tr: &Arc<Transaction>) -> Self {
         assert_eq!(tr.before(), &self.doc, "Applying a mismatched transaction");
         let selection = tr.selection();
         let mut state = Self {

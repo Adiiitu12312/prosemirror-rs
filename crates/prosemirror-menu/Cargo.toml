@@ -1,0 +1,17 @@
+[package]
+name = "prosemirror-menu"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Native menus and toolbar controls for the ProseMirror editor state"
+
+[dependencies]
+prosemirror-model.workspace = true
+prosemirror-state.workspace = true
+prosemirror-commands.workspace = true
+prosemirror-history.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+prosemirror-test-builder.workspace = true

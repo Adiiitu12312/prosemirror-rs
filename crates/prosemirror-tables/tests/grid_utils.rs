@@ -1,6 +1,6 @@
 //! Ports the four grid utility test files from prosemirror-tables 1.8.5.
 
-use prosemirror_model::{Fragment, Node, Schema};
+use prosemirror_model::{AttributeSpec, Fragment, Node, Schema};
 use prosemirror_schema_basic::{marks, nodes};
 use prosemirror_tables::{table_nodes, TableNodesOptions};
 use prosemirror_tables::utils::{
@@ -11,7 +11,9 @@ use serde_json::json;
 
 fn table_schema() -> Schema {
     let mut types = nodes();
-    types.extend(table_nodes(TableNodesOptions::default()));
+    let mut options = TableNodesOptions::default();
+    options.cell_attributes.insert("test".into(), AttributeSpec::with_default(json!("default")));
+    types.extend(table_nodes(options));
     Schema::new(types, marks())
 }
 

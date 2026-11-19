@@ -130,15 +130,21 @@ impl StoredCollab {
         &self,
         skip: usize,
         schema: &Schema,
+        live_origins: Option<&[Arc<Transaction>]>,
     ) -> Result<Vec<Rebaseable>, CollabError> {
         let mut origins = HashMap::new();
         let mut steps = Vec::new();
-        for item in self.unconfirmed.iter().skip(skip) {
-            let origin = match origins.entry(item.origin) {
-                std::collections::hash_map::Entry::Occupied(entry) => Arc::clone(entry.get()),
-                std::collections::hash_map::Entry::Vacant(entry) => {
-                    let stored = self.origins.get(item.origin).ok_or(CollabError::InvalidState)?;
-                    Arc::clone(entry.insert(Arc::new(stored.restore(schema)?)))
+        let live_origins = live_origins.filter(|origins| origins.len() == self.unconfirmed.len());
+        for (index, item) in self.unconfirmed.iter().enumerate().skip(skip) {
+            let origin = if let Some(live) = live_origins {
+                Arc::clone(&live[index])
+            } else {
+                match origins.entry(item.origin) {
+                    std::collections::hash_map::Entry::Occupied(entry) => Arc::clone(entry.get()),
+                    std::collections::hash_map::Entry::Vacant(entry) => {
+                        let stored = self.origins.get(item.origin).ok_or(CollabError::InvalidState)?;
+                        Arc::clone(entry.insert(Arc::new(stored.restore(schema)?)))
+                    }
                 }
             };
             steps.push(Rebaseable {

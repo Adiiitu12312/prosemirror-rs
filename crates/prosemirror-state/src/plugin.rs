@@ -98,6 +98,17 @@ pub trait TypedStateField: Send + Sync {
         old_state: &EditorState,
         new_state: &EditorState,
     ) -> Self::Value;
+
+    /// Applies the transaction using the same shared object returned by the editor state.
+    fn apply_shared(
+        &self,
+        tr: &Arc<Transaction>,
+        value: &Self::Value,
+        old_state: &EditorState,
+        new_state: &EditorState,
+    ) -> Self::Value {
+        self.apply(tr, value, old_state, new_state)
+    }
 }
 
 pub(crate) type ErasedValue = Arc<dyn Any + Send + Sync>;
@@ -107,7 +118,7 @@ pub(crate) trait ErasedStateField: Send + Sync {
     fn accepts(&self, value: &ErasedValue) -> bool;
     fn apply(
         &self,
-        tr: &Transaction,
+        tr: &Arc<Transaction>,
         value: &ErasedValue,
         old_state: &EditorState,
         new_state: &EditorState,
@@ -125,13 +136,13 @@ impl<T: TypedStateField> ErasedStateField for T {
 
     fn apply(
         &self,
-        tr: &Transaction,
+        tr: &Arc<Transaction>,
         value: &ErasedValue,
         old_state: &EditorState,
         new_state: &EditorState,
     ) -> ErasedValue {
         let typed = value.downcast_ref::<T::Value>().expect("matching plugin field type");
-        Arc::new(TypedStateField::apply(self, tr, typed, old_state, new_state))
+        Arc::new(TypedStateField::apply_shared(self, tr, typed, old_state, new_state))
     }
 }
 

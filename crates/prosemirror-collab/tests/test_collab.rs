@@ -1,4 +1,6 @@
 // Ported from prosemirror-collab 1.3.1, test/test-collab.ts.
+use std::sync::Arc;
+
 use prosemirror_collab::{
     collab, get_version, receive_transaction, sendable_steps, ClientId, CollabConfig, ReceiveOptions,
 };
@@ -315,18 +317,51 @@ fn receives_remote_steps_with_backward_selection_and_tracks_origins() {
     assert!(!tr.selection_set());
 
     let mut local = state.tr();
+    let typed_metadata = Arc::new("typed metadata".to_owned());
     local.insert_text_at_selection("a").insert_text_at_selection("b")
-        .set_time(101).set_meta("origin", json!("preserved"));
-    let edited = state.apply(&local);
+        .set_time(101).set_meta("origin", json!("preserved"))
+        .set_typed_meta("typedOrigin", Arc::clone(&typed_metadata));
+    let edited = state.apply_transaction(&local);
+    let original = &edited.transactions[0];
+    let before_rebase = sendable_steps(&edited.state).unwrap().unwrap();
+    assert!(Arc::ptr_eq(original, &before_rebase.origins[0]));
     let receive = receive_transaction(
-        &edited, &[remote], &[ClientId::Number(1)], ReceiveOptions::default()
+        &edited.state, &[remote], &[ClientId::Number(1)], ReceiveOptions::default()
     ).unwrap();
-    let received = edited.apply(&receive);
+    let received = edited.state.apply(&receive);
     let pending = sendable_steps(&received).unwrap().unwrap();
     assert_eq!(pending.version, 1);
     assert_eq!(pending.steps.len(), 2);
-    assert!(std::sync::Arc::ptr_eq(&pending.origins[0], &pending.origins[1]));
+    assert!(Arc::ptr_eq(original, &pending.origins[0]));
+    assert!(Arc::ptr_eq(&pending.origins[0], &pending.origins[1]));
     assert_eq!(pending.origins[0].time, 101);
     assert_eq!(pending.origins[0].doc(), &doc!(p!("ab")).node);
     assert_eq!(pending.origins[0].get_meta("origin"), Some(&json!("preserved")));
+    assert!(Arc::ptr_eq(
+        pending.origins[0].get_typed_meta::<Arc<String>>("typedOrigin").unwrap(), &typed_metadata,
+    ));
+}
+
+#[test]
+fn restores_serialized_collab_steps_and_origin_metadata() {
+    let plugin = collab(CollabConfig::default());
+    let state = EditorState::create(EditorStateConfig {
+        schema: test_schema().clone(),
+        doc: None,
+        selection: None,
+        stored_marks: None,
+        plugins: vec![plugin.clone()],
+    });
+    let mut tr = state.tr();
+    tr.insert_text_at_selection("a").insert_text_at_selection("b").set_meta("data", json!("keep"));
+    let state = state.apply(&tr);
+    let fields = [("collab", &plugin)];
+    let json = state.to_json_with_plugins(&fields).unwrap();
+    let restored = EditorState::from_json_with_plugins(
+        &state.schema, &json, vec![plugin.clone()], &fields,
+    ).unwrap();
+    let pending = sendable_steps(&restored).unwrap().unwrap();
+    assert_eq!(pending.steps.as_slice(), tr.steps());
+    assert!(Arc::ptr_eq(&pending.origins[0], &pending.origins[1]));
+    assert_eq!(pending.origins[0].get_meta("data"), Some(&json!("keep")));
 }
