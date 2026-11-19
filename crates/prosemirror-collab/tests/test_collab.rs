@@ -9,7 +9,7 @@ use prosemirror_model::{Fragment, Node, Slice};
 use prosemirror_state::{EditorState, EditorStateConfig, Selection, Transaction};
 use prosemirror_test_builder::{doc, p, test_schema};
 use prosemirror_transform::Step;
-use serde_json::json;
+use serde_json::{json, Value};
 
 struct Server {
     states: Vec<EditorState>,
@@ -209,18 +209,38 @@ fn supports_undo() {
 }
 
 #[test]
-fn supports_redo() {
+fn parity_exception_collab_redo_selection() {
+    let cases: Value = serde_json::from_str(include_str!(
+        "../../../oracle/parity-exceptions.json"
+    ))
+    .unwrap();
+    let case = &cases["collab_redo_selection"];
     let mut server = Server::pair();
     server.type_text(0, "A", None);
     server.type_text(1, "B", None);
     server.type_text(0, "C", None);
     server.undo(1);
+    let after_undo = server.states[1].doc.text_content();
     server.redo(1);
+    let peer = &server.states[1];
+    let after_redo = peer.doc.text_content();
+    let redo_cursor = peer.selection.head(&peer.doc);
     server.type_text(1, "D", None);
     server.type_text(0, "E", None);
-    // History 1.5.2 restores the redo cursor immediately after B. The
-    // unmodified Collab 1.3.1 scenario produces ABDCE with the current JS pins.
-    server.compare_text("ABDCE");
+    let final_texts = server.states.iter().map(|peer| peer.doc.text_content()).collect::<Vec<_>>();
+    assert_eq!(
+        json!({
+            "afterUndo": after_undo,
+            "afterRedo": after_redo,
+            "redoCursor": redo_cursor,
+            "finalTexts": final_texts,
+        }),
+        case["pinned"]
+    );
+    for text in final_texts {
+        assert_ne!(Some(text.as_str()), case["originalFinalText"].as_str());
+        server.compare_text(&text);
+    }
 }
 
 #[test]

@@ -1,6 +1,7 @@
 //! Port of prosemirror-transform 1.12.7 test/test-mapping.ts.
 
 use prosemirror_transform::{Mapping, StepMap};
+use serde_json::{json, Value};
 
 fn mapping(ranges: &[[usize; 3]], mirror: Option<(usize, usize)>) -> Mapping {
     let mut mapping = Mapping::from_maps(ranges.iter().map(|range| StepMap::new(range.to_vec())).collect());
@@ -152,14 +153,32 @@ fn can_invert_a_sliced_mapping() {
 }
 
 #[test]
-fn inverting_a_prefix_uses_only_retained_mirror_positions() {
+fn parity_exception_sliced_mapping_inverse_mirror() {
+    let cases: Value = serde_json::from_str(include_str!(
+        "../../../oracle/parity-exceptions.json"
+    ))
+    .unwrap();
+    let case = &cases["sliced_mapping_inverse_mirror"];
     let source = mapping(&[[2, 4, 0], [2, 0, 4], [0, 0, 1], [1, 0, 1]], Some((0, 1)));
     let sliced = source.slice(0, 2);
     let inverted = sliced.invert();
-    // Upstream 1.12.7 uses the backing array length, yielding mirror [1,2]
-    // and mapping 4 to 6 even though index 2 is outside the two-step inverse.
-    assert_eq!(inverted.get_mirror(1), Some(0));
-    assert_eq!(inverted.map(sliced.map(4, 1), 1), 4);
+    let forward = sliced.map(4, 1);
+    let observed = json!({
+        "mapCount": inverted.maps.len(),
+        "mirror": [inverted.get_mirror(0), inverted.get_mirror(1)],
+        "forward": forward,
+        "roundTrip": inverted.map(forward, 1),
+    });
+    assert_eq!(observed, case["rust"]);
+    assert_eq!(observed["forward"], case["upstream"]["forward"]);
+    assert_ne!(observed["mirror"], case["upstream"]["mirror"]);
+    assert_ne!(observed["roundTrip"], case["upstream"]["roundTrip"]);
+    assert_eq!(inverted.map(forward, 1), 4);
+    assert!(inverted
+        .mirror
+        .iter()
+        .flatten()
+        .all(|&index| index < inverted.maps.len()));
 }
 
 #[test]

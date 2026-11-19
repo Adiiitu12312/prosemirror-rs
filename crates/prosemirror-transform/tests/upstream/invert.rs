@@ -132,7 +132,20 @@ fn reverts_accurately_when_mapped() {
 }
 
 #[test]
-fn inverted_mark_sets_keep_exclusive_link_changes_serializable() {
+fn parity_exception_mark_set_inverse_json() {
+    fn mark_operations(step: &Value) -> Value {
+        if step["stepType"] == "markSet" {
+            Value::Array(step["steps"].as_array().unwrap().iter().map(mark_operations).collect())
+        } else {
+            json!([step["stepType"], step["from"], step["to"], step["mark"]["attrs"]["href"]])
+        }
+    }
+
+    let cases: Value = serde_json::from_str(include_str!(
+        "../../../../oracle/parity-exceptions.json"
+    ))
+    .unwrap();
+    let case = &cases["mark_set_inverse_json"];
     let schema = schema();
     let link = |href| schema.mark_type("link").unwrap().create(Some(json!({"href": href})));
     let before = node(&schema, "doc", None, vec![node(&schema, "paragraph", None, vec![
@@ -149,8 +162,16 @@ fn inverted_mark_sets_keep_exclusive_link_changes_serializable() {
 
     let redo = undo.invert(&transform.doc);
     let redo_json = serde_json::to_value(&redo).unwrap();
-    // The upstream representation nests another markSet here and its own JSON decoder rejects it.
-    let replay = Step::from_json(&schema, &redo_json).unwrap();
+    assert_eq!(redo_json["stepType"], "markSet");
+    let replay = Step::from_json(&schema, &redo_json);
+    let observed = json!({
+        "redo": mark_operations(&redo_json),
+        "decodeError": replay.as_ref().err().map(ToString::to_string),
+    });
+    assert_eq!(observed, case["rust"]);
+    assert_ne!(observed["redo"], case["upstream"]["redo"]);
+    assert_ne!(observed["decodeError"], case["upstream"]["decodeError"]);
+    let replay = replay.unwrap();
     assert_eq!(applied(&replay, &before), transform.doc);
     assert!(replay.get_map().ranges.is_empty());
     assert!(replay.map(&prosemirror_transform::StepMap::single(1, 3, 0)).is_none());

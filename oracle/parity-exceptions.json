@@ -1,0 +1,45 @@
+{
+  "sliced_mapping_inverse_mirror": {
+    "upstream": {
+      "mapCount": 2,
+      "mirror": [null, 2],
+      "forward": 4,
+      "roundTrip": 6
+    },
+    "rust": {
+      "mapCount": 2,
+      "mirror": [1, 0],
+      "forward": 4,
+      "roundTrip": 4
+    }
+  },
+  "mark_set_inverse_json": {
+    "upstream": {
+      "redo": [
+        ["addMark", 1, 4, "/new"],
+        [
+          ["removeMark", 1, 4, "/old"],
+          ["addMark", 1, 4, "/new"]
+        ]
+      ],
+      "decodeError": "Invalid JSON for MarkSetStep"
+    },
+    "rust": {
+      "redo": [
+        ["addMark", 1, 4, "/new"],
+        ["removeMark", 1, 4, "/old"],
+        ["addMark", 1, 4, "/new"]
+      ],
+      "decodeError": null
+    }
+  },
+  "collab_redo_selection": {
+    "pinned": {
+      "afterUndo": "AC",
+      "afterRedo": "ABC",
+      "redoCursor": 3,
+      "finalTexts": ["ABDCE", "ABDCE"]
+    },
+    "originalFinalText": "ABCDE"
+  }
+}
