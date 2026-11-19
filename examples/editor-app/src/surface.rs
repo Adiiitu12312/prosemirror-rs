@@ -1420,8 +1420,7 @@ mod tests {
         ]}))
     }
 
-    #[test]
-    fn marked_text_runs_resolve_their_own_styles() {
+    fn resolved_test_runs() -> Vec<TextStyle> {
         let doc = style_document();
         let frame = frame(&doc, &Selection::cursor(1));
         let block = &frame.blocks[0];
@@ -1429,42 +1428,79 @@ mod tests {
         collect_units(&block.children, block.from, TextStyle::for_block(block).0, &mut units);
         let (text, spans) = text_spans(&units);
         assert_eq!(text, "abcdefghij");
+        spans.into_iter().map(|span| span.style).collect()
+    }
+
+    #[test]
+    fn strong_mark_resolves_bold_weight() {
+        let style = resolved_test_runs()[1];
+        assert_eq!(style, TextStyle { bold: true, ..TextStyle::default() });
+        assert_eq!(style.attrs().weight, Weight::BOLD);
+    }
+
+    #[test]
+    fn em_mark_resolves_italic_slant() {
+        let style = resolved_test_runs()[2];
+        assert_eq!(style, TextStyle { italic: true, ..TextStyle::default() });
+        assert_eq!(style.attrs().style, Style::Italic);
+    }
+
+    #[test]
+    fn code_mark_resolves_monospace_and_background() {
+        let style = resolved_test_runs()[3];
+        assert_eq!(style, TextStyle { mono: true, background: Some(CODE), ..TextStyle::default() });
+        assert_eq!(style.attrs().family, Family::Monospace);
+    }
+
+    #[test]
+    fn link_mark_resolves_color_and_underline() {
+        let style = resolved_test_runs()[4];
+        assert_eq!(style, TextStyle { color: BLUE, underline: true, ..TextStyle::default() });
+        assert_eq!(style.attrs().color_opt, Some(BLUE));
+    }
+
+    #[test]
+    fn strike_mark_resolves_strikethrough() {
+        assert_eq!(resolved_test_runs()[5], TextStyle { strikethrough: true, ..TextStyle::default() });
+    }
+
+    #[test]
+    fn regular_and_combined_text_runs_preserve_styles() {
+        let styles = resolved_test_runs();
         let plain = TextStyle::default();
         let bold = TextStyle { bold: true, ..plain };
-        let italic = TextStyle { italic: true, ..plain };
         let code = TextStyle { mono: true, background: Some(CODE), ..plain };
-        let link = TextStyle { color: BLUE, underline: true, ..plain };
-        let strike = TextStyle { strikethrough: true, ..plain };
-        assert_eq!(spans.iter().map(|span| span.style).collect::<Vec<_>>(), [
-            plain, bold, italic, code, link, strike,
+        assert_eq!(styles[0], plain);
+        assert_eq!(styles[6..], [
             TextStyle { italic: true, ..bold },
             TextStyle { bold: true, ..code },
             TextStyle { italic: true, ..code },
             TextStyle { bold: true, italic: true, ..code },
         ]);
-        assert_eq!(bold.attrs().weight, Weight::BOLD);
-        assert_eq!(italic.attrs().style, Style::Italic);
-        assert_eq!(code.attrs().family, Family::Monospace);
-        assert_eq!(link.attrs().color_opt, Some(BLUE));
+    }
+
+    fn assert_block_style(kind: &str, expected: TextStyle, font_size: f32, line_height: f32) {
+        let doc = style_document();
+        let frame = frame(&doc, &Selection::cursor(1));
+        let block = frame.blocks.iter().find(|block| block.node.type_name() == kind).unwrap();
+        let (style, metrics) = TextStyle::for_block(block);
+        assert_eq!(style, expected);
+        assert_eq!((metrics.font_size, metrics.line_height), (font_size, line_height));
     }
 
     #[test]
-    fn textblock_kinds_resolve_weight_family_and_metrics() {
-        let doc = style_document();
-        let frame = frame(&doc, &Selection::cursor(1));
-        let expectations = [
-            ("paragraph", Family::SansSerif, Weight::NORMAL, 16.0, 24.0),
-            ("heading", Family::SansSerif, Weight::BOLD, 26.0, 34.0),
-            ("code_block", Family::Monospace, Weight::NORMAL, 16.0, 24.0),
-        ];
-        for (block, (kind, family, weight, size, line_height)) in frame.blocks.iter().zip(expectations) {
-            assert_eq!(block.node.type_name(), kind);
-            let (style, metrics) = TextStyle::for_block(block);
-            let attrs = style.attrs();
-            assert_eq!((attrs.family, attrs.weight, attrs.style), (family, weight, Style::Normal));
-            assert_eq!((metrics.font_size, metrics.line_height), (size, line_height));
-            assert!(!style.underline && !style.strikethrough);
-        }
+    fn paragraph_resolves_regular_prose() {
+        assert_block_style("paragraph", TextStyle::default(), 16.0, 24.0);
+    }
+
+    #[test]
+    fn heading_resolves_bold_larger_text() {
+        assert_block_style("heading", TextStyle { bold: true, ..TextStyle::default() }, 26.0, 34.0);
+    }
+
+    #[test]
+    fn code_block_resolves_monospace_text() {
+        assert_block_style("code_block", TextStyle { mono: true, ..TextStyle::default() }, 16.0, 24.0);
     }
 
     #[test]
