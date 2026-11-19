@@ -11,3 +11,6 @@ prosemirror-transform = { workspace = true }
 prosemirror-state = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+[dev-dependencies]
+prosemirror-test-builder = { path = "../prosemirror-test-builder" }

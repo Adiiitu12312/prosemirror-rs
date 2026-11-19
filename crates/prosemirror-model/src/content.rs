@@ -503,14 +503,14 @@ impl Nfa {
             for state in subset {
                 for edge in &self.0[state] {
                     let Some(label) = &edge.label else { continue };
-                    let targets = match transitions.iter_mut().find(|(known, _)| known == label) {
-                        Some((_, targets)) => targets,
+                    let index = match transitions.iter().position(|(known, _)| known == label) {
+                        Some(index) => index,
                         None => {
                             transitions.push((label.clone(), HashSet::new()));
-                            &mut transitions.last_mut().expect("transition was appended").1
+                            transitions.len() - 1
                         }
                     };
-                    targets.extend(self.closure(edge.to));
+                    transitions[index].1.extend(self.closure(edge.to));
                 }
             }
             let mut edges = Vec::with_capacity(transitions.len());

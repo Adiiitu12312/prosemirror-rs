@@ -103,6 +103,9 @@ impl ResolvedPos {
     }
 
     pub fn before(&self, depth: usize) -> usize {
+        if depth == self.depth + 1 {
+            return self.pos;
+        }
         let d = depth.min(self.depth);
         if d == 0 {
             0
@@ -112,6 +115,9 @@ impl ResolvedPos {
     }
 
     pub fn after(&self, depth: usize) -> usize {
+        if depth == self.depth + 1 {
+            return self.pos;
+        }
         let d = depth.min(self.depth);
         if d == 0 {
             self.doc().content().size()
@@ -155,6 +161,11 @@ impl ResolvedPos {
         }
     }
 
+    pub fn pos_at_index(&self, index: usize, depth: usize) -> usize {
+        self.start(depth)
+            + self.node(depth).content().children[..index].iter().map(Node::node_size).sum::<usize>()
+    }
+
     pub fn shared_depth(&self, pos: usize) -> usize {
         for depth in (1..=self.depth).rev() {
             if self.start(depth) <= pos && self.end(depth) >= pos {
@@ -173,17 +184,26 @@ impl ResolvedPos {
         if self.text_offset() > 0 && idx < parent.child_count() {
             return parent.child(idx).marks().to_vec();
         }
-        let main = if idx < parent.child_count() {
-            parent.child(idx).marks()
+        let before = idx.checked_sub(1).and_then(|index| parent.maybe_child(index));
+        let after = parent.maybe_child(idx);
+        let (main, other) = if before.is_some() {
+            (before, after)
         } else {
-            &[]
+            (after, before)
         };
-        let prev = if idx > 0 {
-            parent.child(idx - 1).marks()
-        } else {
-            &[]
-        };
-        main.iter().filter(|m| prev.contains(m)).cloned().collect()
+        main.map_or_else(Vec::new, |main| Self::shared_marks(main, other))
+    }
+
+    pub fn marks_across(&self, end: &Self) -> Option<Vec<Mark>> {
+        let after = self.parent().maybe_child(self.index(self.depth)).filter(|node| node.is_inline())?;
+        let next = end.parent().maybe_child(end.index(end.depth));
+        Some(Self::shared_marks(after, next))
+    }
+
+    fn shared_marks(main: &Node, other: Option<&Node>) -> Vec<Mark> {
+        main.marks().iter().filter(|mark| {
+            mark.is_inclusive() || other.is_some_and(|node| mark.is_in_set(node.marks()))
+        }).cloned().collect()
     }
 
     pub fn same_depth(&self, other: &ResolvedPos) -> usize {
@@ -200,15 +220,29 @@ impl ResolvedPos {
         self.pos.saturating_sub(self.parent_offset) == other.pos.saturating_sub(other.parent_offset)
     }
 
-    pub fn block_range(&self, other: &ResolvedPos) -> NodeRange {
-        let depth = self.same_depth(other);
-        NodeRange {
-            start: self.before(depth + 1),
-            end: other.after(depth + 1),
-            depth,
-            start_index: self.index(depth),
-            end_index: other.index(depth) + 1,
+    pub fn block_range(&self, other: &ResolvedPos) -> Option<NodeRange> {
+        self.block_range_with(other, |_| true)
+    }
+
+    pub fn block_range_with(
+        &self,
+        other: &ResolvedPos,
+        mut predicate: impl FnMut(&Node) -> bool,
+    ) -> Option<NodeRange> {
+        let (from, to) = if self.pos <= other.pos { (self, other) } else { (other, self) };
+        let start_depth = from.depth.checked_sub(usize::from(from.parent().inline_content() || from.pos == to.pos))?;
+        for depth in (0..=start_depth).rev() {
+            if to.pos <= from.end(depth) && predicate(from.node(depth)) {
+                return Some(NodeRange {
+                    start: from.before(depth + 1),
+                    end: to.after(depth + 1),
+                    depth,
+                    start_index: from.index(depth),
+                    end_index: to.index_after(depth),
+                });
+            }
         }
+        None
     }
 }
 

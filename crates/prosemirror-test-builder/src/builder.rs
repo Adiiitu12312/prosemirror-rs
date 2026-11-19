@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::ops::Deref;
-use prosemirror_model::{Fragment, Mark, Node};
+use prosemirror_model::{Fragment, Mark, ModelError, Node, Schema};
+use serde_json::Value;
 use crate::schema::test_schema;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -48,30 +49,12 @@ impl BuilderContext {
     }
 
     pub fn parse_text(&mut self, text: &str, marks: Vec<Mark>) -> Node {
-        let mut clean_text = String::new();
-        let mut chars = text.chars().peekable();
-
-        while let Some(ch) = chars.next() {
-            if ch == '<' {
-                let mut tag_name = String::new();
-                let mut is_tag = false;
-                for inner_ch in chars.by_ref() {
-                    if inner_ch == '>' {
-                        is_tag = true;
-                        break;
-                    }
-                    tag_name.push(inner_ch);
-                }
-                if is_tag && !tag_name.is_empty() {
-                    self.tags.insert(tag_name, self.cur_pos);
-                    continue;
-                }
-            }
-            clean_text.push(ch);
-            self.cur_pos += ch.len_utf16();
+        let clean_text = parse_tags(text, &mut self.cur_pos, &mut self.tags);
+        if clean_text.is_empty() {
+            Node::new_text(clean_text, marks)
+        } else {
+            test_schema().text(&clean_text, Some(marks))
         }
-
-        Node::new_text(clean_text, marks)
     }
 
     pub fn wrap_block<F>(&mut self, type_name: &str, f: F) -> Node
@@ -84,14 +67,15 @@ impl BuilderContext {
             self.cur_pos += 1;
         }
 
-        let children = f(self);
+        let mut children = f(self);
+        children.retain(|child| !child.is_text() || child.node_size() != 0);
         let fragment = Fragment::from_nodes(children);
 
         if !is_doc {
             self.cur_pos += 1;
         }
 
-        test_schema().node(type_name, None, Some(fragment), None).unwrap()
+        test_schema().node_type(type_name).unwrap().create(None, Some(fragment), None)
     }
 }
 
@@ -100,8 +84,158 @@ pub trait IntoBuilderNode {
 }
 
 impl IntoBuilderNode for Node {
-    fn build(self, _ctx: &mut BuilderContext) -> Node {
+    fn build(self, ctx: &mut BuilderContext) -> Node {
+        ctx.cur_pos += self.node_size();
         self
+    }
+}
+
+fn parse_tags(text: &str, pos: &mut usize, tags: &mut HashMap<String, usize>) -> String {
+    let mut result = String::new();
+    let mut chars = text.char_indices().peekable();
+    while let Some((index, ch)) = chars.next() {
+        if ch == '<' {
+            let start = index + 1;
+            let rest = &text[start..];
+            let end = rest.bytes().take_while(|b| b.is_ascii_alphanumeric() || *b == b'_').count();
+            if end > 0 && rest.as_bytes().get(end) == Some(&b'>') {
+                tags.insert(rest[..end].to_owned(), *pos);
+                while chars.next_if(|(at, _)| *at <= start + end).is_some() {}
+                continue;
+            }
+        }
+        result.push(ch);
+        *pos += ch.len_utf16();
+    }
+    result
+}
+
+/// A string, a tagged node, or a flattened group produced by a mark builder.
+pub enum ChildSpec {
+    Text(String),
+    Node(TaggedDoc),
+    Flat {
+        nodes: Vec<Node>,
+        tags: HashMap<String, usize>,
+    },
+}
+
+impl From<&str> for ChildSpec {
+    fn from(text: &str) -> Self {
+        Self::Text(text.to_owned())
+    }
+}
+
+impl From<Node> for ChildSpec {
+    fn from(node: Node) -> Self {
+        TaggedDoc { node, tags: HashMap::new() }.into()
+    }
+}
+
+impl From<TaggedDoc> for ChildSpec {
+    fn from(node: TaggedDoc) -> Self {
+        Self::Node(node)
+    }
+}
+
+pub struct BuilderAlias {
+    pub type_name: String,
+    pub attrs: Option<Value>,
+}
+
+pub struct Builders<'a> {
+    schema: &'a Schema,
+    aliases: HashMap<String, BuilderAlias>,
+}
+
+pub fn builders(schema: &Schema, aliases: HashMap<String, BuilderAlias>) -> Builders<'_> {
+    Builders { schema, aliases }
+}
+
+impl Builders<'_> {
+    pub fn node(
+        &self,
+        name: &str,
+        attrs: Option<Value>,
+        children: Vec<ChildSpec>,
+    ) -> Result<TaggedDoc, ModelError> {
+        let (type_name, attrs) = self.resolve_alias(name, attrs);
+        let node_type = self.schema.node_type(type_name)
+            .ok_or_else(|| ModelError::UnknownNodeType(type_name.to_owned()))?;
+        let (nodes, tags) = self.flatten(children, |node| node);
+        let node = node_type.create(attrs, Some(Fragment::from_nodes(nodes)), None);
+        Ok(TaggedDoc { node, tags })
+    }
+
+    pub fn mark(
+        &self,
+        name: &str,
+        attrs: Option<Value>,
+        children: Vec<ChildSpec>,
+    ) -> Result<ChildSpec, ModelError> {
+        let (type_name, attrs) = self.resolve_alias(name, attrs);
+        let mark_type = self.schema.mark_type(type_name)
+            .ok_or_else(|| ModelError::UnknownMarkType(type_name.to_owned()))?;
+        let mark = mark_type.create(attrs);
+        let (nodes, tags) = self.flatten(children, |node| {
+            let marks = Mark::add_to_set(node.marks(), mark.clone());
+            if marks.len() > node.marks().len() {
+                node.with_marks(marks)
+            } else {
+                node
+            }
+        });
+        Ok(ChildSpec::Flat { nodes, tags })
+    }
+
+    fn resolve_alias<'a>(&'a self, name: &'a str, mut attrs: Option<Value>) -> (&'a str, Option<Value>) {
+        let Some(alias) = self.aliases.get(name) else {
+            return (name, attrs);
+        };
+        if let Some(defaults) = alias.attrs.as_ref().and_then(Value::as_object) {
+            let mut merged = defaults.clone();
+            if let Some(overrides) = attrs.take().and_then(|value| value.as_object().cloned()) {
+                merged.extend(overrides);
+            }
+            attrs = Some(Value::Object(merged));
+        }
+        (&alias.type_name, attrs)
+    }
+
+    fn flatten(
+        &self,
+        children: Vec<ChildSpec>,
+        map: impl Fn(Node) -> Node,
+    ) -> (Vec<Node>, HashMap<String, usize>) {
+        let mut nodes = Vec::new();
+        let mut tags = HashMap::new();
+        let mut pos = 0;
+        for child in children {
+            match child {
+                ChildSpec::Text(text) => {
+                    let text = parse_tags(&text, &mut pos, &mut tags);
+                    if !text.is_empty() {
+                        nodes.push(map(self.schema.text(&text, None)));
+                    }
+                }
+                ChildSpec::Node(child) => {
+                    let start = pos + usize::from(!child.node.is_text());
+                    tags.extend(child.tags.into_iter().map(|(name, offset)| (name, start + offset)));
+                    let node = map(child.node);
+                    pos += node.node_size();
+                    nodes.push(node);
+                }
+                ChildSpec::Flat { nodes: children, tags: child_tags } => {
+                    tags.extend(child_tags.into_iter().map(|(name, offset)| (name, pos + offset)));
+                    for child in children {
+                        let node = map(child);
+                        pos += node.node_size();
+                        nodes.push(node);
+                    }
+                }
+            }
+        }
+        (nodes, tags)
     }
 }
 

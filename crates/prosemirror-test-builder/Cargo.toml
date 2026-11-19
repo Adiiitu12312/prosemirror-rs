@@ -7,6 +7,6 @@ description = "Document test builder and DSL macros matching ProseMirror test-bu
 
 [dependencies]
 prosemirror-model = { workspace = true }
-prosemirror-transform = { workspace = true }
-prosemirror-state = { workspace = true }
+prosemirror-schema-basic.workspace = true
+prosemirror-schema-list.workspace = true
 serde_json = { workspace = true }

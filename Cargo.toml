@@ -6,6 +6,8 @@ members = [
     "crates/prosemirror-state",
     "crates/prosemirror-history",
     "crates/prosemirror-commands",
+    "crates/prosemirror-schema-basic",
+    "crates/prosemirror-schema-list",
     "crates/prosemirror-test-builder",
     "crates/prosemirror-view",
     "crates/prosemirror-fuzz",
@@ -30,5 +32,7 @@ prosemirror-transform = { path = "crates/prosemirror-transform" }
 prosemirror-state = { path = "crates/prosemirror-state" }
 prosemirror-history = { path = "crates/prosemirror-history" }
 prosemirror-commands = { path = "crates/prosemirror-commands" }
+prosemirror-schema-basic = { path = "crates/prosemirror-schema-basic" }
+prosemirror-schema-list = { path = "crates/prosemirror-schema-list" }
 prosemirror-test-builder = { path = "crates/prosemirror-test-builder" }
 prosemirror-view = { path = "crates/prosemirror-view" }
