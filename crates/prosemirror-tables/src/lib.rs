@@ -1,6 +1,7 @@
 pub mod fixtables;
 pub mod schema;
 pub mod tablemap;
+pub mod utils;
 
 pub use schema::{table_node_types, table_nodes, TableNodesOptions, TableRole};
 pub use tablemap::{Axis, Problem, Rect, TableMap, TableMapError};
