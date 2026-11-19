@@ -132,7 +132,9 @@ impl BrowserFlags {
         let Some(window) = web_sys::window() else { return Self::default() };
         let navigator = window.navigator();
         let agent = navigator.user_agent().unwrap_or_default();
-        let safari = navigator.vendor().unwrap_or_default().contains("Apple Computer");
+        let safari = js_sys::Reflect::get(navigator.as_ref(), &JsValue::from_str("vendor"))
+            .ok().and_then(|vendor| vendor.as_string())
+            .is_some_and(|vendor| vendor.contains("Apple Computer"));
         Self {
             chrome: agent.contains("Chrome/"),
             gecko: agent.contains("Gecko/") && !agent.contains("WebKit"),

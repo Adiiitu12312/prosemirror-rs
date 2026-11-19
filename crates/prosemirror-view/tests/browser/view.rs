@@ -10,7 +10,7 @@ use prosemirror_test_builder::{doc, hr, p, strong_text, BuilderContext};
 use prosemirror_view::browser::{BrowserView, BrowserViewProps, Mount};
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::wasm_bindgen_test;
-use web_sys::{HtmlElement, Node};
+use web_sys::HtmlElement;
 
 use crate::support::{document, mount, state};
 
@@ -20,7 +20,7 @@ fn can_mount_an_existing_node() {
     let space = document().body().unwrap();
     space.append_child(&dom).unwrap();
     let view = BrowserView::new(Mount::Existing(dom.clone()), state(doc!(p!("hi"))), BrowserViewProps::default()).unwrap();
-    assert!((&view.dom() as &Node).is_same_node(Some(&dom)));
+    assert!(view.dom().is_same_node(Some(&dom)));
     assert_eq!(dom.content_editable(), "true");
     assert_eq!(dom.first_child().unwrap().node_name(), "P");
     view.destroy();
@@ -45,8 +45,10 @@ fn can_update_props_with_set_props() {
     let state = view.state();
     let mut tr = state.tr();
     tr.insert_text_at_selection("y");
-    view.update(state.apply(&tr), BrowserViewProps {
-        scroll_threshold: None, scroll_margin: Some(10.0), ..view.props().props
+    view.set_props(|props| {
+        props.state = state.apply(&tr);
+        props.scroll_threshold = None;
+        props.scroll_margin = Some(10.0);
     }).unwrap();
     assert_eq!(view.state().doc.content().size(), 3);
     assert_eq!(view.props().scroll_threshold, None);

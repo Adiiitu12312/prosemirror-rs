@@ -1,6 +1,6 @@
 # prosemirror-rs
 
-A Rust port of [ProseMirror](https://prosemirror.net/). The workspace contains the document model, transforms, editor state, editing commands, and editor plugins. The native view crate includes portable decoration and clipboard logic alongside layout, IME, selection handle, and accessibility experiments.
+A Rust port of [ProseMirror](https://prosemirror.net/). The workspace contains the document model, transforms, editor state, editing commands, and editor plugins. The view crate includes a native controller and a WebAssembly browser editor.
 
 [![CI Pipeline](https://github.com/Adiiitu12312/prosemirror-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/Adiiitu12312/prosemirror-rs/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -28,9 +28,11 @@ A Rust port of [ProseMirror](https://prosemirror.net/). The workspace contains t
 | `prosemirror-search` | 1.1.0 | Query matching, search commands, replacement, and highlights |
 | `prosemirror-menu` | 1.3.0 | Native menus, dropdowns, focus navigation, and stock commands |
 | `prosemirror-example-setup` | 1.2.3 | Standard input rules, key bindings, menus, and native plugin configuration |
-| `prosemirror-view` | 1.42.9 | Native editor controller, decoration trees, and portable clipboard logic |
+| `prosemirror-view` | 1.42.9 | Native and browser editor controllers, decoration trees, DOM reconciliation, and clipboard logic |
 
-The model, transform, state, history, commands, list, test-builder, collaboration, Markdown, search, changeset, and table suites carry cases from the corresponding upstream test files. The view suites cover decoration and clipboard behavior. The native view and menu take rendering, coordinates, and events from a host. Upstream browser `EditorView`, DOM observation, drawing, and browser selection suites remain open.
+The model, transform, state, history, commands, list, test-builder, collaboration, Markdown, search, changeset, and table suites carry cases from the corresponding upstream test files. The view suites include portable decoration and clipboard tests and browser DOM tests. The native view and menu take rendering, coordinates, and events from a host.
+
+On `wasm32-unknown-unknown`, construct a `prosemirror_view::BrowserView` from a mount, an editor state, and view props. It renders into the browser DOM and uses the native selection, mutation observer, and input events. Include `prosemirror_view::browser::CSS` in the page for the standard editor styles.
 
 Positions and internal text edits use UTF-16 code units. The model exposes `Node::text_utf16()` for exact access to isolated surrogate code units. Rust UTF-8, DOM text, and JSON APIs represent those isolated units with replacement characters.
 
@@ -43,6 +45,6 @@ npm ci
 npm test
 ```
 
-GitHub Actions compiles Rust and runs the workspace tests, doctests, differential fuzzer, and Clippy on Linux, macOS, and Windows. The fuzzer compares application outcomes, document JSON, step maps, position mappings and deletion flags, and inverse steps with the pinned JavaScript oracle. A mismatch writes `repro_case_<iteration>.json`.
+GitHub Actions compiles Rust and runs the workspace tests, doctests, differential fuzzer, and Clippy on Linux, macOS, and Windows. A separate job compiles the WebAssembly view with Clippy and runs its Rust integration tests in headless Chrome. The fuzzer compares application outcomes, document JSON, step maps, position mappings and deletion flags, and inverse steps with the pinned JavaScript oracle. A mismatch writes `repro_case_<iteration>.json`.
 
 The original Rust integration tests are registered in `crates/prosemirror-integration-tests`. Crate-specific tests live alongside the ports. Fixture-driven tests retain the upstream test names and evaluate the behavior in Rust against the upstream expectations.

@@ -10,7 +10,8 @@ use prosemirror_view::{BrowserView, BrowserViewProps, Decoration, DecorationSet}
 use serde_json::Value;
 use wasm_bindgen_test::wasm_bindgen_test;
 
-use crate::selection::{block, document, mark, paragraph, set_selection, Fixture};
+use crate::selection::{block, fixture, fixture_with_props, mark, paragraph, set_selection};
+use crate::support::document;
 
 use TextblockDirection::{Backward, Down, Forward, Left, Right, Up};
 
@@ -29,49 +30,49 @@ fn supports_selection_modify() -> bool {
 
 #[wasm_bindgen_test]
 fn works_at_the_left_side_of_a_textblock() {
-    let view = Fixture::new(block("doc", vec![paragraph("a"), paragraph("<a>bcd")]));
+    let view = fixture(block("doc", vec![paragraph("a"), paragraph("<a>bcd")]));
     assert_horizontal(&view, [true, true, false, false]);
 }
 
 #[wasm_bindgen_test]
 fn works_at_the_right_side_of_a_textblock() {
-    let view = Fixture::new(block("doc", vec![paragraph("abc<a>"), paragraph("d")]));
+    let view = fixture(block("doc", vec![paragraph("abc<a>"), paragraph("d")]));
     assert_horizontal(&view, [false, false, true, true]);
 }
 
 #[wasm_bindgen_test]
 fn works_in_the_middle_of_a_textblock() {
-    let view = Fixture::new(block("doc", vec![paragraph("a<a>b")]));
+    let view = fixture(block("doc", vec![paragraph("a<a>b")]));
     assert_horizontal(&view, [false, false, false, false]);
 }
 
 #[wasm_bindgen_test]
 fn works_at_the_start_of_the_document() {
-    let view = Fixture::new(block("doc", vec![paragraph("<a>bcd")]));
+    let view = fixture(block("doc", vec![paragraph("<a>bcd")]));
     assert_horizontal(&view, [true, true, false, false]);
 }
 
 #[wasm_bindgen_test]
 fn works_at_the_end_of_the_document() {
-    let view = Fixture::new(block("doc", vec![paragraph("abc<a>")]));
+    let view = fixture(block("doc", vec![paragraph("abc<a>")]));
     assert_horizontal(&view, [false, false, true, true]);
 }
 
 #[wasm_bindgen_test]
 fn works_for_vertical_motion_in_a_one_line_block() {
-    let view = Fixture::new(block("doc", vec![paragraph("abc<a>")]));
+    let view = fixture(block("doc", vec![paragraph("abc<a>")]));
     assert_vertical(&view, true, true);
 }
 
 #[wasm_bindgen_test]
 fn works_for_vertical_motion_at_the_end_of_a_wrapped_block() {
-    let view = Fixture::new(block("doc", vec![paragraph(&format!("{}<a>foo", "foo ".repeat(99)))]));
+    let view = fixture(block("doc", vec![paragraph(&format!("{}<a>foo", "foo ".repeat(99)))]));
     assert_vertical(&view, false, true);
 }
 
 #[wasm_bindgen_test]
 fn works_for_vertical_motion_at_the_start_of_a_wrapped_block() {
-    let view = Fixture::new(block("doc", vec![paragraph(&format!("foo <a>{}", "foo ".repeat(99)))]));
+    let view = fixture(block("doc", vec![paragraph(&format!("foo <a>{}", "foo ".repeat(99)))]));
     assert_vertical(&view, true, false);
 }
 
@@ -85,7 +86,7 @@ fn works_for_virtual_motion_when_in_a_mark() {
     ]).into()]);
     let b = doc.tag("b");
     let c = doc.tag("c");
-    let view = Fixture::new(doc);
+    let view = fixture(doc);
     assert_vertical(&view, true, false);
     set_selection(&view, Selection::cursor(b));
     assert_vertical(&view, false, false);
@@ -96,7 +97,7 @@ fn works_for_virtual_motion_when_in_a_mark() {
 #[wasm_bindgen_test]
 fn works_at_the_start_of_an_rtl_block() {
     if !supports_selection_modify() { return }
-    let view = Fixture::new(block("doc", vec![paragraph("<a>مرآة")]));
+    let view = fixture(block("doc", vec![paragraph("<a>مرآة")]));
     view.dom().style().set_property("direction", "rtl").unwrap();
     assert_horizontal(&view, [false, true, true, false]);
 }
@@ -104,7 +105,7 @@ fn works_at_the_start_of_an_rtl_block() {
 #[wasm_bindgen_test]
 fn works_at_the_end_of_an_rtl_block() {
     if !supports_selection_modify() { return }
-    let view = Fixture::new(block("doc", vec![paragraph("مرآة<a>")]));
+    let view = fixture(block("doc", vec![paragraph("مرآة<a>")]));
     view.dom().style().set_property("direction", "rtl").unwrap();
     assert_horizontal(&view, [true, false, false, true]);
 }
@@ -112,7 +113,7 @@ fn works_at_the_end_of_an_rtl_block() {
 #[wasm_bindgen_test]
 fn works_inside_an_rtl_block() {
     if !supports_selection_modify() { return }
-    let view = Fixture::new(block("doc", vec![paragraph("مر<a>آة")]));
+    let view = fixture(block("doc", vec![paragraph("مر<a>آة")]));
     view.dom().style().set_property("direction", "rtl").unwrap();
     assert_horizontal(&view, [false, false, false, false]);
 }
@@ -120,7 +121,7 @@ fn works_inside_an_rtl_block() {
 #[wasm_bindgen_test]
 fn works_in_a_bidirectional_block() {
     if !supports_selection_modify() { return }
-    let view = Fixture::new(block("doc", vec![paragraph("proseمرآة<a>")]));
+    let view = fixture(block("doc", vec![paragraph("proseمرآة<a>")]));
     assert!(!view.end_of_textblock(Left, None));
     assert!(!view.end_of_textblock(Backward, None));
     assert!(view.end_of_textblock(Forward, None));
@@ -129,7 +130,7 @@ fn works_in_a_bidirectional_block() {
 #[wasm_bindgen_test]
 fn works_in_a_cursor_wrapper() {
     if !supports_selection_modify() { return }
-    let view = Fixture::new(block("doc", vec![paragraph("foo<a>")]));
+    let view = fixture(block("doc", vec![paragraph("foo<a>")]));
     let mut transaction = view.state().tr();
     transaction.set_stored_marks(Some(vec![test_schema().mark_type("em").unwrap().create(None)]));
     assert!(view.dispatch(transaction).unwrap());
@@ -148,6 +149,6 @@ fn works_after_a_widget() {
         widgets: HashMap::from([(1, Rc::new(move |_: &_, _: &_, _: &_, _| Ok(WidgetView::new(widget.clone()))) as _)]),
         ..BrowserViewProps::default()
     };
-    let view = Fixture::with_props(doc, props);
+    let view = fixture_with_props(doc, props);
     assert!(!view.end_of_textblock(Backward, None));
 }

@@ -1,22 +1,19 @@
 // Ported from prosemirror-view@1.42.9 test/webtest-selection.ts.
 use std::collections::{BTreeMap, HashMap};
-use std::ops::Deref;
 use std::rc::Rc;
 
 use js_sys::{Function, Reflect};
 use prosemirror_model::Node as ModelNode;
-use prosemirror_state::{EditorState, EditorStateConfig, Selection};
+use prosemirror_state::{EditorState, Selection};
 use prosemirror_test_builder::{builders, test_schema, ChildSpec, TaggedDoc};
 use prosemirror_view::browser::{ViewportPoint, ViewportRect};
-use prosemirror_view::{BrowserView, BrowserViewProps, Decoration, DecorationSet, Mount};
+use prosemirror_view::{BrowserView, BrowserViewProps, Decoration, DecorationSet};
 use serde_json::json;
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_test::wasm_bindgen_test;
-use web_sys::{Document, Element, HtmlElement, KeyboardEvent, KeyboardEventInit, Node};
+use web_sys::{HtmlElement, KeyboardEvent, KeyboardEventInit, Node};
 
-pub(super) fn document() -> Document {
-    web_sys::window().unwrap().document().unwrap()
-}
+use crate::support::{document, mount, TestView};
 
 pub(super) fn block(name: &str, children: Vec<ChildSpec>) -> TaggedDoc {
     builders(test_schema(), HashMap::new()).node(name, None, children).unwrap()
@@ -41,61 +38,18 @@ fn horizontal_rule() -> ChildSpec {
     block("horizontal_rule", Vec::new()).into()
 }
 
-pub(super) struct Fixture {
-    view: BrowserView,
-    workspace: Element,
+pub(super) fn fixture(doc: TaggedDoc) -> TestView {
+    fixture_with_props(doc, BrowserViewProps::default())
 }
 
-impl Fixture {
-    pub(super) fn new(doc: TaggedDoc) -> Self {
-        Self::with_props(doc, BrowserViewProps::default())
-    }
-
-    pub(super) fn with_props(doc: TaggedDoc, props: BrowserViewProps) -> Self {
-        let selection = doc.get_tag("a").map(|pos| {
-            if doc.resolve(pos).unwrap().parent().inline_content() {
-                Selection::text(pos, doc.get_tag("b").unwrap_or(pos))
-            } else {
-                Selection::node(pos)
-            }
-        });
-        let state = EditorState::create(EditorStateConfig {
-            schema: test_schema().clone(),
-            doc: Some(doc.node),
-            selection,
-            stored_marks: None,
-            plugins: Vec::new(),
-        });
-        let document = document();
-        let workspace = document.create_element("div").unwrap();
-        workspace.set_attribute("class", "view-selection-workspace").unwrap();
-        workspace.set_attribute("style", "position:relative;width:36em;padding:1px").unwrap();
-        let style = document.create_element("style").unwrap();
-        style.set_text_content(Some(
-            ".view-selection-workspace .ProseMirror { position:relative; word-wrap:break-word; white-space:pre-wrap; white-space:break-spaces; font-variant-ligatures:none }              .view-selection-workspace .ProseMirror pre { white-space:pre-wrap }              .view-selection-workspace img[src] { min-height:10px }              .view-selection-workspace img[src^='data:'] { width:16px; height:16px }"
-        ));
-        workspace.append_child(&style).unwrap();
-        document.body().unwrap().append_child(&workspace).unwrap();
-        let view = BrowserView::new(Mount::Append(workspace.clone()), state, props).unwrap();
-        Self { view, workspace }
-    }
-}
-
-impl Deref for Fixture {
-    type Target = BrowserView;
-
-    fn deref(&self) -> &BrowserView {
-        &self.view
-    }
-}
-
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        self.view.destroy();
-        if let Some(parent) = self.workspace.parent_node() {
-            parent.remove_child(self.workspace.as_ref()).unwrap();
-        }
-    }
+pub(super) fn fixture_with_props(doc: TaggedDoc, props: BrowserViewProps) -> TestView {
+    let view = mount(doc, props);
+    let workspace = view.dom().parent_element().unwrap();
+    workspace.set_attribute("style", "position:relative;width:36em;padding:1px").unwrap();
+    let style = document().create_element("style").unwrap();
+    style.set_text_content(Some("#workspace img[src] { min-height:10px } #workspace img[src^='data:'] { width:16px; height:16px }"));
+    workspace.append_child(&style).unwrap();
+    view
 }
 
 pub(super) fn set_selection(view: &BrowserView, selection: Selection) {
@@ -187,7 +141,7 @@ fn press(view: &BrowserView, direction: (&str, u32)) {
 #[wasm_bindgen_test]
 fn can_read_the_dom_selection() {
     if !document().has_focus().unwrap() { return }
-    let view = Fixture::new(block("doc", vec![
+    let view = fixture(block("doc", vec![
         paragraph("one"), horizontal_rule(), block("blockquote", vec![paragraph("two")]).into(),
     ]));
     let root: Node = view.dom().into();
@@ -211,7 +165,7 @@ fn can_read_the_dom_selection() {
 #[wasm_bindgen_test]
 fn syncs_dom_selection_with_editor_selection() {
     if !document().has_focus().unwrap() { return }
-    let view = Fixture::new(block("doc", vec![
+    let view = fixture(block("doc", vec![
         paragraph("one"), horizontal_rule(), block("blockquote", vec![paragraph("two")]).into(),
     ]));
     let one = text_node(view.dom().as_ref(), "one").unwrap();
@@ -227,7 +181,7 @@ fn syncs_dom_selection_with_editor_selection() {
 
 #[wasm_bindgen_test]
 fn returns_sensible_screen_coordinates() {
-    let view = Fixture::new(block("doc", vec![paragraph("one"), paragraph("two")]));
+    let view = fixture(block("doc", vec![paragraph("one"), paragraph("two")]));
     let [p00, p01, p03, p10, p13] = [1, 2, 4, 6, 9].map(|pos| view.coords_at_pos(pos, 1).unwrap());
     assert!(p00.bottom > p00.top);
     assert!(p13.bottom > p13.top);
@@ -243,7 +197,7 @@ fn returns_sensible_screen_coordinates() {
 
 #[wasm_bindgen_test]
 fn returns_proper_coordinates_in_code_blocks() {
-    let view = Fixture::new(block("doc", vec![block("code_block", vec!["a\nb\n".into()]).into()]));
+    let view = fixture(block("doc", vec![block("code_block", vec!["a\nb\n".into()]).into()]));
     let [p0, p1, p2, p3, p4] = [1, 2, 3, 4, 5].map(|pos| view.coords_at_pos(pos, 1).unwrap());
     assert_eq!(p0.top, p1.top);
     assert!(p0.left < p1.left);
@@ -257,7 +211,7 @@ fn returns_proper_coordinates_in_code_blocks() {
 
 #[wasm_bindgen_test]
 fn produces_sensible_screen_coordinates_in_corner_cases() {
-    let view = Fixture::new(block("doc", vec![block("paragraph", vec![
+    let view = fixture(block("doc", vec![block("paragraph", vec![
         "one".into(),
         mark("em", vec!["two".into(), mark("strong", vec!["three".into()]), image()]),
         block("hard_break", Vec::new()).into(),
@@ -273,14 +227,14 @@ fn produces_sensible_screen_coordinates_in_corner_cases() {
 
 #[wasm_bindgen_test]
 fn returns_nonzero_height_rectangles_after_leaves() {
-    let view = Fixture::new(block("doc", vec![block("paragraph", vec![image()]).into()]));
+    let view = fixture(block("doc", vec![block("paragraph", vec![image()]).into()]));
     let coords = view.coords_at_pos(2, 1).unwrap();
     assert!(coords.bottom - coords.top > 5.0);
 }
 
 #[wasm_bindgen_test]
 fn produces_horizontal_rectangles_for_positions_between_blocks() {
-    let view = Fixture::new(block("doc", vec![
+    let view = fixture(block("doc", vec![
         paragraph("ha"), horizontal_rule(), block("blockquote", vec![paragraph("ba")]).into(),
     ]));
     let [a, b, c, d] = [0, 4, 5, 6].map(|pos| view.coords_at_pos(pos, 1).unwrap());
@@ -300,7 +254,7 @@ fn produces_horizontal_rectangles_for_positions_between_blocks() {
 
 #[wasm_bindgen_test]
 fn produces_sensible_screen_coordinates_around_line_breaks() {
-    let view = Fixture::new(block("doc", vec![paragraph("one two three four five-six-seven-eight")]));
+    let view = fixture(block("doc", vec![paragraph("one two three four five-six-seven-eight")]));
     view.dom().style().set_property("width", "4em").unwrap();
     let mut previous: Option<(ViewportRect, ViewportRect)> = None;
     let doc = view.state().doc;
@@ -321,7 +275,7 @@ fn produces_sensible_screen_coordinates_around_line_breaks() {
 
 #[wasm_bindgen_test]
 fn can_find_coordinates_on_node_boundaries() {
-    let view = Fixture::new(block("doc", vec![block("paragraph", vec![
+    let view = fixture(block("doc", vec![block("paragraph", vec![
         "one ".into(), mark("em", vec!["two".into()]), " ".into(),
         mark("em", vec![mark("strong", vec!["three".into()])]),
     ]).into()]));
@@ -335,7 +289,7 @@ fn can_find_coordinates_on_node_boundaries() {
 
 #[wasm_bindgen_test]
 fn finds_proper_coordinates_in_rtl_text() {
-    let view = Fixture::new(block("doc", vec![paragraph("مرآة نثرية")]));
+    let view = fixture(block("doc", vec![paragraph("مرآة نثرية")]));
     view.dom().style().set_property("direction", "rtl").unwrap();
     let coords: Vec<_> = all_positions(&view.state().doc).into_iter()
         .map(|pos| view.coords_at_pos(pos, 1).unwrap()).collect();
@@ -347,7 +301,7 @@ fn finds_proper_coordinates_in_rtl_text() {
 
 #[wasm_bindgen_test]
 fn round_trips_screen_coordinates_and_document_positions() {
-    let view = Fixture::new(block("doc", vec![
+    let view = fixture(block("doc", vec![
         paragraph("one"), block("blockquote", vec![paragraph("two"), paragraph("three")]).into(),
     ]));
     for pos in [1, 2, 4, 7, 14, 15] {
@@ -359,7 +313,7 @@ fn round_trips_screen_coordinates_and_document_positions() {
 
 #[wasm_bindgen_test]
 fn returns_correct_screen_coordinates_for_wrapped_lines() {
-    let view = Fixture::new(block("doc", vec![paragraph("")]));
+    let view = fixture(block("doc", vec![paragraph("")]));
     let top = view.coords_at_pos(1, 1).unwrap();
     let mut pos = 1;
     let mut end = top;
@@ -377,7 +331,7 @@ fn returns_correct_screen_coordinates_for_wrapped_lines() {
 
 #[wasm_bindgen_test]
 fn makes_arrow_motion_go_through_selectable_inline_nodes() {
-    let view = Fixture::new(block("doc", vec![
+    let view = fixture(block("doc", vec![
         block("paragraph", vec!["foo<a>".into(), image(), "bar".into()]).into(),
     ]));
     press(&view, RIGHT);
@@ -396,7 +350,7 @@ fn makes_arrow_motion_go_through_selectable_inline_nodes() {
 
 #[wasm_bindgen_test]
 fn makes_arrow_motion_go_through_selectable_block_nodes() {
-    let view = Fixture::new(block("doc", vec![
+    let view = fixture(block("doc", vec![
         paragraph("hello<a>"), horizontal_rule(),
         block("bullet_list", vec![block("list_item", vec![paragraph("there")]).into()]).into(),
     ]));
@@ -409,7 +363,7 @@ fn makes_arrow_motion_go_through_selectable_block_nodes() {
 
 #[wasm_bindgen_test]
 fn supports_arrow_motion_through_adjacent_blocks() {
-    let view = Fixture::new(block("doc", vec![
+    let view = fixture(block("doc", vec![
         block("blockquote", vec![paragraph("hello<a>")]).into(),
         horizontal_rule(), horizontal_rule(), paragraph("there"),
     ]));
@@ -426,7 +380,7 @@ fn supports_arrow_motion_through_adjacent_blocks() {
 
 #[wasm_bindgen_test]
 fn supports_horizontal_motion_through_blocks() {
-    let view = Fixture::new(block("doc", vec![paragraph("foo<a>"), horizontal_rule(), horizontal_rule(), paragraph("bar")]));
+    let view = fixture(block("doc", vec![paragraph("foo<a>"), horizontal_rule(), horizontal_rule(), paragraph("bar")]));
     press(&view, RIGHT);
     assert_eq!(view.state().selection.from(), 5);
     press(&view, RIGHT);
@@ -443,8 +397,8 @@ fn supports_horizontal_motion_through_blocks() {
     assert_eq!(state.selection.head(&state.doc), 4);
 }
 
-fn inline_block_inline_fixture() -> Fixture {
-    Fixture::new(block("doc", vec![
+fn inline_block_inline_fixture() -> TestView {
+    fixture(block("doc", vec![
         block("paragraph", vec!["foo".into(), image()]).into(), horizontal_rule(),
         block("paragraph", vec![image(), "bar".into()]).into(),
     ]))
@@ -464,7 +418,7 @@ fn allows_moving_directly_from_an_inline_node_to_a_block_node() {
 #[wasm_bindgen_test]
 fn updates_selection_even_if_dom_parameters_look_unchanged() {
     if !document().has_focus().unwrap() { return }
-    let view = Fixture::new(block("doc", vec![paragraph("foobar<a>")]));
+    let view = fixture(block("doc", vec![paragraph("foobar<a>")]));
     view.focus().unwrap();
     let decorations = DecorationSet::create(&view.state().doc, vec![
         Decoration::inline(1, 4, BTreeMap::from([("color".to_owned(), "green".to_owned())]), serde_json::Value::Null),
@@ -492,15 +446,19 @@ impl Drop for RestoreExtend {
     }
 }
 
-#[wasm_bindgen_test]
-fn sets_selection_even_if_selection_extend_throws_dom_exception() {
+fn failing_extend() -> RestoreExtend {
     let ctor = Reflect::get(web_sys::window().unwrap().as_ref(), &"Selection".into()).unwrap();
     let prototype = Reflect::get(&ctor, &"prototype".into()).unwrap();
     let extend = Reflect::get(&prototype, &"extend".into()).unwrap();
     let restore = RestoreExtend { prototype, extend };
     let throw = Function::new_no_args("throw new DOMException('failed')");
     Reflect::set(&restore.prototype, &"extend".into(), throw.as_ref()).unwrap();
+    restore
+}
 
+#[wasm_bindgen_test]
+fn sets_selection_even_if_selection_extend_throws_dom_exception() {
+    let _restore = failing_extend();
     let view = inline_block_inline_fixture();
     set_selection(&view, Selection::node(4));
     press(&view, DOWN);
@@ -508,9 +466,24 @@ fn sets_selection_even_if_selection_extend_throws_dom_exception() {
 }
 
 #[wasm_bindgen_test]
+fn range_fallback_preserves_content_of_backward_selection() {
+    let view = fixture(block("doc", vec![paragraph("abcd")]));
+    view.focus().unwrap();
+    let _restore = failing_extend();
+    set_selection(&view, Selection::text(4, 2));
+    assert_eq!(view.state().selection, Selection::text(4, 2));
+    let selected = native_selection().get_range_at(0).unwrap();
+    let text = text_node(view.dom().as_ref(), "abcd").unwrap();
+    assert!(selected.start_container().unwrap().is_same_node(Some(&text)));
+    assert!(selected.end_container().unwrap().is_same_node(Some(&text)));
+    assert_eq!(selected.start_offset().unwrap(), 1);
+    assert_eq!(selected.end_offset().unwrap(), 3);
+}
+
+#[wasm_bindgen_test]
 fn does_not_put_cursor_after_br_hack_nodes() {
     if !document().has_focus().unwrap() { return }
-    let view = Fixture::new(block("doc", vec![paragraph("")]));
+    let view = fixture(block("doc", vec![paragraph("")]));
     view.focus().unwrap();
     assert_eq!(native_selection().focus_offset(), 0);
 }

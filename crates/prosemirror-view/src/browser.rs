@@ -11,7 +11,7 @@ mod viewdesc;
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 
 use js_sys::Array;
@@ -49,6 +49,7 @@ pub enum Mount {
 pub type ViewEventHandler<E> = Rc<dyn Fn(&BrowserView, &E) -> bool>;
 pub type DispatchTransaction = Rc<dyn Fn(&BrowserView, Transaction)>;
 pub type DecorationProvider = Rc<dyn Fn(&EditorState) -> Option<DecorationSet>>;
+pub type DecorationGroupProvider = Rc<dyn Fn(&EditorState) -> DecorationGroup>;
 pub type Editable = Rc<dyn Fn(&EditorState) -> bool>;
 pub type Attributes = HashMap<String, String>;
 pub type AttributeProvider = Rc<dyn Fn(&EditorState) -> Attributes>;
@@ -80,6 +81,7 @@ pub struct BrowserViewProps {
     pub editable: Option<Editable>,
     pub attributes: Vec<AttributeProvider>,
     pub decorations: Vec<DecorationProvider>,
+    pub decoration_groups: Vec<DecorationGroupProvider>,
     pub plugin_views: Vec<PluginViewFactory>,
     pub node_views: HashMap<String, NodeViewFactory>,
     pub mark_views: HashMap<String, MarkViewFactory>,
@@ -110,6 +112,8 @@ pub struct BrowserViewProps {
     pub transform_copied: Option<TransformCopied>,
     pub scroll_threshold: Option<f64>,
     pub scroll_margin: Option<f64>,
+    pub scroll_threshold_sides: Option<ScrollSides>,
+    pub scroll_margin_sides: Option<ScrollSides>,
 }
 
 /// A snapshot of the current editor state and view props.
@@ -122,6 +126,12 @@ impl Deref for BrowserViewConfig {
     type Target = BrowserViewProps;
     fn deref(&self) -> &Self::Target {
         &self.props
+    }
+}
+
+impl DerefMut for BrowserViewConfig {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.props
     }
 }
 
@@ -146,7 +156,9 @@ struct BrowserViewInner {
 
 impl BrowserView {
     pub fn new(place: Mount, state: EditorState, props: BrowserViewProps) -> Result<Self, JsValue> {
-        let create_root = |document: Document| document.create_element("div")?.dyn_into::<HtmlElement>().map_err(Into::into);
+        let create_root = |document: Document| {
+            document.create_element("div")?.dyn_into::<HtmlElement>().map_err(JsValue::from)
+        };
         let mounted = matches!(place, Mount::Existing(_));
         let root = match place {
             Mount::Existing(root) => root,
@@ -260,10 +272,10 @@ impl BrowserView {
         Ok(())
     }
 
-    pub fn set_props(&self, update: impl FnOnce(&mut BrowserViewProps)) -> Result<(), JsValue> {
-        let BrowserViewConfig { state, mut props } = self.props();
-        update(&mut props);
-        self.update(state, props)
+    pub fn set_props(&self, update: impl FnOnce(&mut BrowserViewConfig)) -> Result<(), JsValue> {
+        let mut config = self.props();
+        update(&mut config);
+        self.update(config.state, config.props)
     }
 
     pub fn update_state(&self, state: EditorState) -> Result<(), JsValue> {
@@ -372,8 +384,8 @@ impl BrowserView {
         };
         if let Some(rect) = rect {
             domcoords::scroll_rect_into_view(&root, rect, &focus, ScrollOptions {
-                threshold: config.scroll_threshold.unwrap_or(0.0).into(),
-                margin: config.scroll_margin.unwrap_or(5.0).into(),
+                threshold: config.scroll_threshold_sides.unwrap_or_else(|| config.scroll_threshold.unwrap_or(0.0).into()),
+                margin: config.scroll_margin_sides.unwrap_or_else(|| config.scroll_margin.unwrap_or(5.0).into()),
             });
         }
         Ok(())
@@ -481,6 +493,7 @@ impl BrowserView {
         let editable = config.editable.as_ref().is_none_or(|editable| editable(&config.state));
         let decorations = DecorationGroup {
             members: config.decorations.iter().filter_map(|get| get(&config.state))
+                .chain(config.decoration_groups.iter().flat_map(|get| get(&config.state).members))
                 .filter(|set| !set.is_empty()).collect(),
         };
         {
@@ -573,8 +586,13 @@ impl BrowserViewInner {
             ("class".to_owned(), "ProseMirror".to_owned()),
             ("contenteditable".to_owned(), editable.to_string()),
         ]);
-        for provider in &config.attributes {
-            for (name, value) in provider(&config.state) {
+        let plugin_attributes = config.state.plugins.iter().filter_map(|plugin| {
+            plugin.call_prop("attributes")?.as_object().map(|attrs| {
+                attrs.iter().filter_map(|(name, value)| Some((name.clone(), value.as_str()?.to_owned()))).collect()
+            })
+        });
+        for provider_attrs in config.attributes.iter().map(|provider| provider(&config.state)).chain(plugin_attributes) {
+            for (name, value) in provider_attrs {
                 match name.as_str() {
                     "class" => {
                         let classes = attrs.entry(name).or_default();

@@ -3,7 +3,7 @@
 use js_sys::Date;
 use prosemirror_model::{Node as ModelNode, Slice};
 use prosemirror_state::Selection;
-use prosemirror_transform::{drop_point, Mappable};
+use prosemirror_transform::drop_point;
 use serde_json::json;
 use wasm_bindgen::{JsCast, JsValue};
 use web_sys::{ClipboardEvent, DragEvent, Event, KeyboardEvent, KeyboardEventInit, MouseEvent, Node};
@@ -348,7 +348,7 @@ fn click_handlers(view: &BrowserView, pos: PositionAtCoords, event: &MouseEvent,
     };
     if let Some(on) = on {
         for (node, at) in nearby_nodes(&config.state.doc, pos.inside) {
-            if on(view, pos.pos, &node, at, Some(at) == pos.inside, event) {
+            if on(view, pos.pos, &node, at, event, Some(at) == pos.inside) {
                 return true;
             }
         }

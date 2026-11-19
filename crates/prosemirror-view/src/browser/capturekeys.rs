@@ -242,8 +242,8 @@ fn skip_ignored_nodes(view: &BrowserView, direction: i32) -> Result<(), JsValue>
             if block || node.is_same_node(Some(&root)) { break }
             let Some(parent) = node.parent_node() else { break };
             let mut sibling = if direction < 0 { node.previous_sibling() } else { node.next_sibling() };
-            while let Some(skipped) = sibling.filter(|sibling| ignorable(view, sibling, direction)) {
-                let index = super::domchange::dom_index(&skipped);
+            while let Some(skipped) = sibling.as_ref().filter(|sibling| ignorable(view, sibling, direction)) {
+                let index = super::domchange::dom_index(skipped);
                 moved = Some((parent.clone(), if direction < 0 { index } else { index + 1 }));
                 sibling = if direction < 0 { skipped.previous_sibling() } else { skipped.next_sibling() };
             }
