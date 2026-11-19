@@ -13,6 +13,7 @@ members = [
     "crates/prosemirror-tables",
     "crates/prosemirror-changeset",
     "crates/prosemirror-markdown",
+    "crates/prosemirror-menu",
     "crates/prosemirror-search",
     "crates/prosemirror-example-setup",
     "crates/prosemirror-commands",
@@ -46,6 +47,7 @@ prosemirror-dropcursor = { path = "crates/prosemirror-dropcursor" }
 prosemirror-gapcursor = { path = "crates/prosemirror-gapcursor" }
 prosemirror-inputrules = { path = "crates/prosemirror-inputrules" }
 prosemirror-keymap = { path = "crates/prosemirror-keymap" }
+prosemirror-menu = { path = "crates/prosemirror-menu" }
 prosemirror-schema-basic = { path = "crates/prosemirror-schema-basic" }
 prosemirror-schema-list = { path = "crates/prosemirror-schema-list" }
 prosemirror-test-builder = { path = "crates/prosemirror-test-builder" }

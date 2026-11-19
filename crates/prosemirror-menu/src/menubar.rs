@@ -81,8 +81,8 @@ pub fn render_grouped(
 ) -> Result<Vec<MenuGroup>, MenuError> {
     projection(
         content, state, host,
-        &|_, _, _| false,
-        &|parent| first_visible(content, parent, state),
+        |_, _, _| false,
+        |_| None,
     )
 }
 
@@ -103,10 +103,8 @@ impl MenuBar {
         let focused = host.focus();
         let groups = projection(
             &self.content, state, host,
-            &|path, kind, visible| visible && self.expanded(path, kind, &focused),
-            &|scope| self.tabstops.get(scope).filter(|path| {
-                lookup(&self.content, path).is_some_and(|item| item.visible(state))
-            }).cloned().or_else(|| first_visible(&self.content, scope, state)),
+            |path, kind, visible| visible && self.expanded(path, kind, &focused),
+            |scope| self.tabstops.get(scope).cloned(),
         )?;
         Ok(MenuSnapshot {
             position: self.options.position,
@@ -202,7 +200,7 @@ impl MenuBar {
     pub fn focus_changed(&mut self, focus: MenuFocus) {
         match focus {
             MenuFocus::Control(target) => {
-                self.open.retain(|scope| target.starts_with(scope) && target != *scope);
+                self.open.retain(|scope| target.starts_with(scope) && target.len() > scope.len());
                 self.tabstops.insert(scope_of(&target).to_vec(), target);
             }
             MenuFocus::Editor | MenuFocus::Other => self.open.clear(),
@@ -239,7 +237,7 @@ impl MenuBar {
     }
 
     fn expanded(&self, path: &[usize], kind: MenuControlKind, focus: &MenuFocus) -> bool {
-        self.open.iter().any(|menu| menu == path)
+        self.open.iter().any(|menu| menu.as_slice() == path)
             || kind == MenuControlKind::Submenu && (
                 self.hovered.as_ref().is_some_and(|hover| hover.starts_with(path))
                 || matches!(focus, MenuFocus::Control(active) if active.len() > path.len() && active.starts_with(path))
@@ -302,12 +300,6 @@ fn scope_controls(groups: &[Vec<MenuElement>], scope: &[usize], state: &EditorSt
     }
 }
 
-fn first_visible(groups: &[Vec<MenuElement>], scope: &[usize], state: &EditorState) -> Option<MenuPath> {
-    let (paths, visible) = scope_controls(groups, scope, state);
-    let index = find_focusable_index(&visible, None, FocusDirection::Forwards)?;
-    paths.into_iter().nth(index)
-}
-
 fn child_path(parent: &[usize], index: usize) -> MenuPath {
     let mut path = parent.to_vec();
     path.push(index);
@@ -344,6 +336,7 @@ fn projection(
         rendered.push(MenuGroup { items, visible, separator_before: previous_visible && visible });
         previous_visible = visible;
     }
+    apply_tabstop(rendered.iter_mut().flat_map(|group| &mut group.items), (projection.tabstop)(&[]));
     Ok(rendered)
 }
 
@@ -354,11 +347,10 @@ where
 {
     fn render(&self, item: &MenuElement, path: MenuPath) -> Result<MenuControl, MenuError> {
         let kind = control_kind(item);
-        let tab_index = if (self.tabstop)(scope_of(&path)).as_ref() == Some(&path) { 0 } else { -1 };
         if let MenuElement::Item(item) = item {
             let state = item.state(self.state);
             return Ok(MenuControl {
-                path, kind, state, tab_index,
+                path, kind, state, tab_index: -1,
                 display: item.display(self.state, self.host)?,
                 title: item.spec.title.as_ref().map(|title| title.text(self.state, self.host)),
                 class: item.spec.class.clone(),
@@ -369,8 +361,9 @@ where
                 children: Vec::new(),
             });
         }
-        let children = item.children().expect("dropdown and submenu contain controls").iter().enumerate()
+        let mut children = item.children().expect("dropdown and submenu contain controls").iter().enumerate()
             .map(|(index, item)| self.render(item, child_path(&path, index))).collect::<Result<Vec<_>, _>>()?;
+        apply_tabstop(children.iter_mut(), (self.tabstop)(&path));
         let visible = children.iter().any(|child| child.state.visible);
         let expanded = (self.is_expanded)(&path, kind, visible);
         let (label, title, class, css) = match item {
@@ -384,13 +377,29 @@ where
             MenuElement::Item(_) => unreachable!(),
         };
         Ok(MenuControl {
-            path, kind, tab_index, title, class, css, children,
+            path, kind, tab_index: -1, title, class, css, children,
             state: MenuItemState { visible, enabled: visible, active: false },
             display: MenuDisplay::Label(self.host.translate(label)),
             aria_disabled: None,
             aria_pressed: None,
             aria_expanded: Some(expanded),
         })
+    }
+}
+
+fn apply_tabstop<'a>(controls: impl Iterator<Item = &'a mut MenuControl>, preferred: Option<MenuPath>) {
+    let mut first = None;
+    for control in controls.filter(|control| control.state.visible) {
+        if preferred.as_ref() == Some(&control.path) {
+            control.tab_index = 0;
+            return;
+        }
+        if first.is_none() {
+            first = Some(control);
+        }
+    }
+    if let Some(control) = first {
+        control.tab_index = 0;
     }
 }
 
@@ -473,7 +482,7 @@ impl MenuBarLayout {
     /// Returns the scroll adjustment when the active end of the selection is
     /// obscured by the toolbar. The host applies it to the wrapping scroller.
     pub fn selection_scroll_delta(&self, toolbar: Rect, selection_rects: &[Rect], inverted: bool) -> Option<f64> {
-        self.floating?;
+        self.floating.filter(|floating| floating.visible)?;
         let selection = if inverted { selection_rects.first()? } else { selection_rects.last()? };
         (selection.top < toolbar.bottom && selection.bottom > toolbar.top)
             .then_some(selection.top - toolbar.bottom)

@@ -117,7 +117,7 @@ pub fn remove_column(tr: &mut Transaction, rect: &TableRect, col: usize) -> Opti
         let index = row * map.width + col;
         let pos = map.map[index];
         let cell = table.node_at(pos)?;
-        let start = tr.mapping().slice(map_from, None).map(table_start + pos, 1);
+        let start = tr.mapping().slice(map_from, tr.steps().len()).map(table_start + pos, 1);
         if (col > 0 && map.map[index - 1] == pos) || (col + 1 < map.width && map.map[index + 1] == pos) {
             let attrs = change_colspan(cell, col - map.col_count(pos).ok()?, false);
             set_attrs(tr, start, attrs);
@@ -190,12 +190,12 @@ pub fn remove_row(tr: &mut Transaction, rect: &TableRect, row: usize) -> Option<
             let mut attrs = cell_attrs(cell);
             attrs.insert("rowspan".into(), json!(get_span(cell, "rowspan").saturating_sub(1)));
             if above {
-                let mapped = tr.mapping().slice(map_from, None).map(table_start + pos, 1);
+                let mapped = tr.mapping().slice(map_from, tr.steps().len()).map(table_start + pos, 1);
                 set_attrs(tr, mapped, attrs);
             } else {
                 let moved = cell.node_type()?.try_create(Some(Value::Object(attrs)), Some(cell.content().clone()), None).ok()?;
                 let new_pos = map.position_at(row + 1, col, table)?;
-                let mapped = tr.mapping().slice(map_from, None).map(table_start + new_pos, 1);
+                let mapped = tr.mapping().slice(map_from, tr.steps().len()).map(table_start + new_pos, 1);
                 tr.insert(mapped, Fragment::from_nodes(vec![moved]));
             }
         }

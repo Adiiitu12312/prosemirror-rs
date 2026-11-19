@@ -12,6 +12,7 @@ prosemirror-gapcursor.workspace = true
 prosemirror-history.workspace = true
 prosemirror-inputrules.workspace = true
 prosemirror-keymap.workspace = true
+prosemirror-menu.workspace = true
 prosemirror-model.workspace = true
 prosemirror-schema-list.workspace = true
 prosemirror-state.workspace = true

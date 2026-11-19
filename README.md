@@ -26,7 +26,8 @@ A Rust port of [ProseMirror](https://prosemirror.net/). The workspace contains t
 | `prosemirror-changeset` | 2.4.0 | Changed ranges, span merging, token diffs, and change simplification |
 | `prosemirror-markdown` | 1.13.4 | Markdown schema, parsing, and serialization |
 | `prosemirror-search` | 1.1.0 | Query matching, search commands, replacement, and highlights |
-| `prosemirror-example-setup` | 1.2.3 | Standard input rules, key bindings, and native plugin configuration |
+| `prosemirror-menu` | 1.3.0 | Native menus, dropdowns, focus navigation, and stock commands |
+| `prosemirror-example-setup` | 1.2.3 | Standard input rules, key bindings, menus, and native plugin configuration |
 | `prosemirror-view` | 1.42.9 | Native editor controller, decoration trees, and portable clipboard logic |
 
 The model, transform, state, history, commands, list, test-builder, and collaboration suites carry cases from the corresponding upstream test files. The view ports cover the decoration data structures and clipboard behavior. The upstream browser `EditorView`, DOM observer, rendering, event, and browser selection suites remain open, as do upstream extension packages absent from the workspace.
