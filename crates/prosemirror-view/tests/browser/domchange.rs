@@ -412,11 +412,11 @@ fn handles_replaced_content_dom() {
 fn inside_marks_edit(original: &str, replacement: &str, expected: TaggedDoc) {
     let view = mount(doc!(p!("foo", mark("em", vec!["bar".into()]), mark("strong", vec!["baz".into()]))), BrowserViewProps::default());
     let bar = find_text(view.dom().as_ref(), "bar");
-    let foo = find_text(view.dom().as_ref(), "foo");
+    let preceding_text = find_text(view.dom().as_ref(), "foo");
     replace_text(&view, original, replacement);
     flushed(&view, expected);
     assert!(bar.parent_node().is_some_and(|node| view.dom().contains(Some(&node))));
-    assert!(foo.parent_node().is_some_and(|node| view.dom().contains(Some(&node))));
+    assert!(preceding_text.parent_node().is_some_and(|node| view.dom().contains(Some(&node))));
 }
 
 #[wasm_bindgen_test]

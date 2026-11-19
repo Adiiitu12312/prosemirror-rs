@@ -10,7 +10,7 @@ use prosemirror_test_builder::{doc, hr, p, strong_text, BuilderContext};
 use prosemirror_view::browser::{BrowserView, BrowserViewProps, Mount};
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::wasm_bindgen_test;
-use web_sys::HtmlElement;
+use web_sys::{ClipboardEvent, ClipboardEventInit, DataTransfer, Event, EventInit, HtmlElement};
 
 use crate::support::{document, mount, state};
 
@@ -170,4 +170,48 @@ fn parses_html_clipboard_and_serializes_the_inserted_slice() {
     let copied = view.serialize_for_clipboard(slice).unwrap();
     assert_eq!(copied.text, "b");
     assert!(copied.dom.inner_html().contains("<strong"));
+}
+
+#[wasm_bindgen_test]
+fn routes_native_clipboard_events() {
+    let view = mount(doc!(p!("one <a>two<b>")), BrowserViewProps::default());
+    let data = DataTransfer::new().unwrap();
+    let init = ClipboardEventInit::new();
+    init.set_clipboard_data(Some(&data));
+    init.set_bubbles(true);
+    init.set_cancelable(true);
+    let cut = ClipboardEvent::new_with_event_init_dict("cut", &init).unwrap();
+    view.dom().dispatch_event(&cut).unwrap();
+    assert!(cut.default_prevented());
+    assert_eq!(data.get_data("text/plain").unwrap(), "two");
+    assert_eq!(view.state().doc, doc!(p!("one ")).node);
+    let paste = ClipboardEvent::new_with_event_init_dict("paste", &init).unwrap();
+    view.dom().dispatch_event(&paste).unwrap();
+    assert!(paste.default_prevented());
+    assert_eq!(view.state().doc, doc!(p!("one two")).node);
+}
+
+#[wasm_bindgen_test]
+fn routes_new_dom_event_props_and_cleans_up_listeners_on_destroy() {
+    let count = Rc::new(Cell::new(0));
+    let calls = count.clone();
+    let view = mount(doc!(p!("content")), BrowserViewProps::default());
+    view.set_props(|props| {
+        props.handle_dom_events.insert("example".into(), Rc::new(move |_, event| {
+            calls.set(calls.get() + 1);
+            event.prevent_default();
+            true
+        }));
+    }).unwrap();
+    let init = EventInit::new();
+    init.set_bubbles(true);
+    init.set_cancelable(true);
+    let event = Event::new_with_event_init_dict("example", &init).unwrap();
+    let root = view.dom();
+    assert!(!root.dispatch_event(&event).unwrap());
+    assert_eq!(count.get(), 1);
+    view.destroy();
+    let event = Event::new_with_event_init_dict("example", &init).unwrap();
+    assert!(root.dispatch_event(&event).unwrap());
+    assert_eq!(count.get(), 1);
 }

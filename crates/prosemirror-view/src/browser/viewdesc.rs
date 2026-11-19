@@ -131,18 +131,21 @@ pub struct DocView {
     root: HtmlElement,
     description: Option<Desc>,
     composition_node: Option<Node>,
+    composition_range: Option<(usize, usize)>,
 }
 
 impl DocView {
     pub fn new(root: HtmlElement) -> Self {
-        Self { root, description: None, composition_node: None }
+        Self { root, description: None, composition_node: None, composition_range: None }
     }
 
     pub fn update(
         &mut self, state: &EditorState, decorations: &DecorationGroup, props: &BrowserViewProps,
     ) -> Result<(), JsValue> {
         let document = self.root.owner_document().ok_or_else(|| error("Editor root has no owner document"))?;
-        let renderer = Renderer { document: &document, state, props, locked_text: self.composition_node.as_ref() };
+        let composition = self.composition_node.as_ref()
+            .and_then(|text| LockedText::find(state, text, self.composition_range));
+        let renderer = Renderer { document: &document, state, props, composition: composition.as_ref() };
         let root = self.root.clone().into();
         let mut description = self.description.take().unwrap_or_else(|| Desc {
             dom: root,
@@ -164,10 +167,15 @@ impl DocView {
         }
         self.root.set_text_content(None);
         self.composition_node = None;
+        self.composition_range = None;
     }
 
     pub fn set_composition_node(&mut self, node: Option<Node>) {
         self.composition_node = node;
+    }
+
+    pub fn set_composition_range(&mut self, range: Option<(usize, usize)>) {
+        self.composition_range = range;
     }
 
     pub fn dom_at_pos(&self, pos: usize, side: i32) -> Option<(Node, u32)> {
@@ -193,7 +201,11 @@ impl DocView {
         let found = self.nearest(node, false)?;
         Some(ViewDescInfo {
             dom: found.dom.clone(), content_dom: found.content_dom.clone(),
-            model: found.model().cloned(), from: found.from, to: found.to(), border: found.border(),
+            model: found.model().cloned().or_else(|| match &found.kind {
+                Kind::Composition(composition) => composition.model.clone(),
+                _ => None,
+            }),
+            from: found.from, to: found.to(), border: found.border(),
         })
     }
 
@@ -324,6 +336,7 @@ enum Kind {
     Node(NodeDesc),
     Mark(MarkDesc),
     Widget(WidgetDesc),
+    Composition(CompositionDesc),
     Hack(Hack),
 }
 
@@ -350,6 +363,13 @@ struct WidgetDesc {
     view: WidgetView,
 }
 
+#[derive(Clone)]
+struct CompositionDesc {
+    text: Node,
+    size: usize,
+    model: Option<ModelNode>,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Hack {
     Separator,
@@ -369,6 +389,7 @@ impl Desc {
             Kind::Root(node) => node.content().size(),
             Kind::Node(info) => info.node.node_size(),
             Kind::Mark(_) => self.children.iter().map(Self::size).sum(),
+            Kind::Composition(info) => info.size,
             Kind::Widget(_) | Kind::Hack(_) => 0,
         }
     }
@@ -393,6 +414,7 @@ impl Desc {
         if same(&self.dom, dom)
             || self.content_dom.as_ref().is_some_and(|content| same(content, dom))
             || matches!(&self.kind, Kind::Node(info) if same(&info.node_dom, dom))
+            || matches!(&self.kind, Kind::Composition(info) if same(&info.text, dom))
         {
             return Some(self);
         }
@@ -412,10 +434,14 @@ impl Desc {
     }
 
     fn dom_from_pos(&self, pos: usize, side: i32) -> Option<(Node, u32)> {
-        if let Kind::Node(info) = &self.kind {
-            if info.node.is_text() {
+        match &self.kind {
+            Kind::Node(info) if info.node.is_text() => {
                 return Some((info.node_dom.clone(), u32::try_from(pos - self.from).ok()?));
             }
+            Kind::Composition(info) => {
+                return Some((info.text.clone(), u32::try_from(pos - self.from).ok()?));
+            }
+            _ => (),
         }
         let Some(content) = &self.content_dom else { return Some((self.dom.clone(), 0)) };
         let mut index = 0;
@@ -468,6 +494,13 @@ impl Desc {
         match &self.kind {
             Kind::Node(info) if info.node.is_text() && same(node, &info.node_dom) =>
                 return self.from + (offset as usize).min(info.node.node_size()),
+            Kind::Composition(info) => return self.from + if same(node, &info.text) {
+                offset as usize
+            } else if offset > 0 {
+                info.size
+            } else {
+                0
+            },
             Kind::Widget(_) | Kind::Hack(_) => return self.from,
             _ => (),
         }
@@ -505,9 +538,15 @@ impl Desc {
                 }
             }
         }
-        if offset == 0 && dom_edge(&self.dom, node, true) {
-            self.start()
-        } else if offset == node.child_nodes().length() && dom_edge(&self.dom, node, false) || bias > 0 {
+        if self.dom.has_child_nodes() {
+            if offset == 0 && dom_edge(&self.dom, node, true) {
+                return self.start();
+            }
+            if offset == node.child_nodes().length() && dom_edge(&self.dom, node, false) {
+                return self.end();
+            }
+        }
+        if bias > 0 {
             self.end()
         } else {
             self.start()
@@ -595,6 +634,9 @@ impl Desc {
             Kind::Mark(info) => info.custom.as_ref().and_then(|view| view.ignore_mutation.as_ref())
                 .is_some_and(|callback| callback(mutation)),
             Kind::Widget(info) => !selection || info.decoration.spec()["ignoreSelection"].as_bool().unwrap_or(false),
+            Kind::Composition(info) => matches!(mutation,
+                ViewMutation::Dom(record) if record.type_() == "characterData" && info.text.node_value() == record.old_value()
+            ),
             Kind::Hack(_) => !selection,
             Kind::Root(_) => false,
         }
@@ -619,7 +661,7 @@ impl Desc {
                     destroy(&self.dom);
                 }
             }
-            Kind::Root(_) | Kind::Hack(_) => (),
+            Kind::Root(_) | Kind::Composition(_) | Kind::Hack(_) => (),
         }
         for child in self.children {
             child.destroy();
@@ -631,19 +673,121 @@ struct Renderer<'a> {
     document: &'a Document,
     state: &'a EditorState,
     props: &'a BrowserViewProps,
-    locked_text: Option<&'a Node>,
+    composition: Option<&'a LockedText>,
 }
 
+struct LockedText {
+    dom: Node,
+    from: usize,
+    to: usize,
+}
+
+impl LockedText {
+    fn find(state: &EditorState, dom: &Node, range: Option<(usize, usize)>) -> Option<Self> {
+        if !matches!(state.selection, prosemirror_state::Selection::Text { .. }) {
+            return None;
+        }
+        let resolved = state.doc.resolve(state.selection.from()).ok()?;
+        if !resolved.parent().inline_content() {
+            return None;
+        }
+        let text: Vec<_> = dom.node_value()?.encode_utf16().collect();
+        if text.is_empty() {
+            return None;
+        }
+        let start = resolved.start(resolved.depth);
+        let mut run = Vec::new();
+        let mut offset = start;
+        let mut run_start = start;
+        let mut closest = None;
+        let mut score = (usize::MAX, usize::MAX);
+        let selection = (state.selection.from(), state.selection.to(&state.doc));
+        let mut scan_run = |run: &[u16], base: usize| {
+            for (index, candidate) in run.windows(text.len()).enumerate() {
+                if candidate != text {
+                    continue;
+                }
+                let from = base + index;
+                let to = from + text.len();
+                let distance = selection.0.saturating_sub(to).max(from.saturating_sub(selection.1));
+                let hint = range.map_or(selection.1.abs_diff(to), |(a, b)| a.abs_diff(from) + b.abs_diff(to));
+                if (distance, hint) < score {
+                    score = (distance, hint);
+                    closest = Some((from, to));
+                }
+            }
+        };
+        for child in &resolved.parent().content().children {
+            if let Some(units) = child.text_utf16() {
+                if run.is_empty() {
+                    run_start = offset;
+                }
+                run.extend_from_slice(&units);
+            } else {
+                scan_run(&run, run_start);
+                run.clear();
+            }
+            offset += child.node_size();
+        }
+        scan_run(&run, run_start);
+        let (from, to) = closest?;
+        Some(Self { dom: dom.clone(), from, to })
+    }
+
+    fn description(&self, state: &EditorState) -> CompositionDesc {
+        let size = self.to - self.from;
+        let model = state.doc.resolve(self.from).ok().and_then(|resolved| resolved.node_after())
+            .filter(ModelNode::is_text).map(|node| node.cut(0, size.min(node.node_size())));
+        CompositionDesc { text: self.dom.clone(), size, model }
+    }
+}
+
+#[derive(Clone)]
 struct Want {
     from: usize,
     kind: WantKind,
 }
 
+#[derive(Clone)]
 enum WantKind {
     Node { node: ModelNode, outer: Vec<Decoration>, inner: DecorationGroup },
     Mark { mark: Mark, inline: bool, children: Vec<Want> },
     Widget(Decoration),
+    Composition { dom: Node, composition: CompositionDesc },
     Hack(Hack),
+}
+
+impl Want {
+    fn to(&self) -> usize {
+        match &self.kind {
+            WantKind::Node { node, .. } => self.from + node.node_size(),
+            WantKind::Mark { children, .. } => children.last().map_or(self.from, Want::to),
+            WantKind::Composition { composition, .. } => self.from + composition.size,
+            WantKind::Widget(_) | WantKind::Hack(_) => self.from,
+        }
+    }
+
+    fn slice(&self, from: usize, to: usize) -> Option<Self> {
+        if from <= self.from && to >= self.to() {
+            return Some(self.clone());
+        }
+        if self.from >= to || self.to() <= from {
+            return None;
+        }
+        let from = from.max(self.from);
+        let to = to.min(self.to());
+        let kind = match &self.kind {
+            WantKind::Node { node, outer, inner } if node.is_text() => WantKind::Node {
+                node: node.cut(from - self.from, to - self.from), outer: outer.clone(), inner: inner.clone(),
+            },
+            WantKind::Mark { mark, inline, children } => WantKind::Mark {
+                mark: mark.clone(), inline: *inline,
+                children: children.iter().filter_map(|child| child.slice(from, to)).collect(),
+            },
+            _ => return None,
+        };
+        Some(Self { from, kind })
+    }
 }
 
 impl Renderer<'_> {

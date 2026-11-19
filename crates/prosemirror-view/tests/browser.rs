@@ -10,6 +10,8 @@ mod composition;
 mod domchange;
 #[path = "browser/draw.rs"]
 mod draw;
+#[path = "browser/draw_decoration.rs"]
+mod draw_decoration;
 #[path = "browser/markview.rs"]
 mod markview;
 #[path = "browser/nodeview.rs"]

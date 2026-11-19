@@ -730,10 +730,15 @@ pub(crate) fn composition_start(view: &BrowserView) -> Result<(), JsValue> {
                 }
             }
         }
-        view.with_input(|input| input.composing = true);
+        view.with_input(|input| {
+            input.composing = true;
+            input.composition_finished = false;
+        });
     }
     if BrowserFlags::get().android {
         schedule_composition_end(view, 5000)?;
+    } else {
+        view.with_input(|input| input.composition_timer = input.composition_timer.wrapping_add(1));
     }
     Ok(())
 }
@@ -769,8 +774,9 @@ pub(crate) fn end_composition(view: &BrowserView) -> Result<(), JsValue> {
     }
     view.flush_dom()?;
     let (was_active, completed) = view.with_input(|input| {
-        let was_active = input.composing || input.composition_node.is_some();
-        let completed = input.composing || std::mem::take(&mut input.composition_finished);
+        let ended = std::mem::take(&mut input.composition_finished);
+        let was_active = input.composing || ended || input.composition_node.is_some();
+        let completed = input.composing || ended;
         if input.composing {
             input.composition_ended_at = Date::now();
         }

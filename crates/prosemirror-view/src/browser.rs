@@ -503,7 +503,9 @@ impl BrowserView {
                 observer.dom.disconnect();
             }
             let composition_node = inner.dom_input.composition_node.clone();
+            let composition_range = inner.dom_input.composition_range;
             inner.doc_view.set_composition_node(composition_node);
+            inner.doc_view.set_composition_range(composition_range);
             let result = inner.update_attributes(editable, &config)
                 .and_then(|()| inner.doc_view.update(&config.state, &decorations, &config.props));
             if let Some(observer) = &inner.observer {

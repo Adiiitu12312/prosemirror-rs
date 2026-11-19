@@ -172,9 +172,10 @@ fn clean_added_nodes(view: &BrowserView, browser: BrowserFlags, records: &[Mutat
             remove(if nested { second } else { first });
         } else {
             let focused = view.dom_selection().and_then(|selection| selection.focus_node());
+            let block = focused.as_ref().and_then(|focus| block_parent(view, focus));
             for node in breaks {
                 if let Some(parent) = node.parent_node().filter(|parent| parent.node_name() == "LI") {
-                    if !focused.as_ref().is_some_and(|focus| parent.contains(Some(focus))) {
+                    if !block.as_ref().is_some_and(|block| same_node(&parent, block)) {
                         remove(node);
                     }
                 }
@@ -193,6 +194,22 @@ fn remove(node: &Node) {
     if let Some(parent) = node.parent_node() {
         let _ = parent.remove_child(node);
     }
+}
+
+fn block_parent(view: &BrowserView, node: &Node) -> Option<Node> {
+    let root = view.dom();
+    view.with_doc_view(|doc_view| {
+        let mut parent = node.parent_node();
+        while let Some(node) = parent.filter(|node| !same_node(node, root.as_ref())) {
+            if doc_view.nearest_desc(&node).is_some_and(|desc| {
+                same_node(&desc.dom, &node) && desc.model.is_some_and(|model| model.is_block())
+            }) {
+                return Some(node);
+            }
+            parent = node.parent_node();
+        }
+        None
+    }).flatten()
 }
 
 fn fix_safari_composition(view: &BrowserView, added: &[Node]) {

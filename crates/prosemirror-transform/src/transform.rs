@@ -38,6 +38,10 @@ impl Transform {
     }
 
     pub fn maybe_step(&mut self, step: Step) -> StepResult {
+        let step = match step.bind_custom(&self.doc) {
+            Ok(step) => step,
+            Err(error) => return StepResult::fail(error.to_string()),
+        };
         let result = step.apply(&self.doc);
         if let StepResult::Ok(doc) = &result {
             self.docs.push(std::mem::replace(&mut self.doc, doc.clone()));
