@@ -15,5 +15,5 @@ Thank you for your interest in contributing to `prosemirror-rs`.
    ```bash
    node oracle/test_oracle.js
    ```
-2. Verify that GitHub Actions CI passes across all three platforms (Linux, macOS, Windows).
+2. Verify Rust compilation and tests in GitHub Actions across all three platforms (Linux, macOS, Windows).
 3. If introducing changes to step application or position mapping, run the fuzzer with a high iteration count.

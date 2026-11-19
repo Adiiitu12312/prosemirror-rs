@@ -1,5 +1,4 @@
-import { schema } from 'prosemirror-schema-basic';
-import { Step } from 'prosemirror-transform';
+import assert from 'node:assert/strict';
 import { execSync } from 'node:child_process';
 
 console.log('Testing Node ProseMirror Oracle...');
@@ -31,17 +30,17 @@ const output = execSync('node oracle/server.js', {
 });
 
 const parsed = JSON.parse(output);
-console.log('Oracle Response:', parsed);
+assert.equal(parsed.success, true, parsed.error);
+assert.equal(parsed.doc.content[0].content[0].text, 'Hi world');
+assert.deepEqual(parsed.step_map, [1, 5, 2]);
+assert.deepEqual(parsed.positions[3], [1, true, false, true, false]);
+assert.deepEqual(parsed.undone, sampleDoc);
 
-if (!parsed.success) {
-  console.error('FAILED: Oracle reported error', parsed.error);
-  process.exit(1);
-}
-
-const firstText = parsed.doc.content[0].content[0].text;
-if (firstText !== 'Hi world') {
-  console.error(`FAILED: Expected "Hi world", got "${firstText}"`);
-  process.exit(1);
-}
+const rejected = JSON.parse(execSync('node oracle/server.js', {
+  input: JSON.stringify({ doc: sampleDoc, step: { stepType: 'replace', from: 0, to: 13 } }),
+  encoding: 'utf-8',
+}));
+assert.equal(rejected.success, false);
+assert.match(rejected.error, /Invalid content for node doc/);
 
 console.log('SUCCESS: Oracle correctly applied step and matched expected output!');

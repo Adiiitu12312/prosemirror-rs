@@ -1,120 +1,41 @@
 # prosemirror-rs
 
-A pure-Rust, DOM-independent implementation of the **ProseMirror** logic layer with 1-to-1 parity, differential fuzzing against the JavaScript reference oracle, and a native view architecture.
+A Rust port of [ProseMirror](https://prosemirror.net/). The workspace contains the document model, transforms, editor state, editing commands, and editor plugins. The native view crate includes portable decoration and clipboard logic alongside layout, IME, selection handle, and accessibility experiments.
 
-[![CI Pipeline](https://github.com/prosemirror-rs/prosemirror-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/prosemirror-rs/prosemirror-rs/actions/workflows/ci.yml)
+[![CI Pipeline](https://github.com/Adiiitu12312/prosemirror-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/Adiiitu12312/prosemirror-rs/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
----
+## Upstream references
 
-## Architecture Overview
+| Module | Reference version | Rust implementation and tests |
+| --- | --- | --- |
+| `prosemirror-model` | 1.24.1 | Schema, content expressions, document tree, UTF-16 positions, marks, replacement, model DOM parsing and serialization |
+| `prosemirror-transform` | 1.10.2 | Built-in steps, maps, slice fitting, structural transforms, and mark operations |
+| `prosemirror-state` | 1.4.3 | Selections, transactions, editor state, and plugin lifecycle |
+| `prosemirror-history` | 1.4.1 | Undo, redo, history grouping, and remapping |
+| `prosemirror-commands` | 1.6.2 | Editing commands and desktop base keymaps |
+| `prosemirror-schema-basic` | 1.2.3 | Basic node, mark, and DOM specifications |
+| `prosemirror-schema-list` | 1.4.1 | List specifications and editing commands |
+| `prosemirror-test-builder` | 1.1.1 | Document builders, mark builders, and named positions |
+| `prosemirror-collab` | 1.3.1 | Client step queue, remote changes, rebasing, and synchronization |
+| `prosemirror-keymap` | 1.2.3 | Key normalization and command dispatch |
+| `prosemirror-inputrules` | 1.5.0 | Text input rules, rule builders, and undo |
+| `prosemirror-gapcursor` | 1.4.0 | Gap selection, navigation, and native event hooks |
+| `prosemirror-view` | 1.42.9 | Decoration trees, decoration mapping, and portable clipboard logic |
 
-```
-                      +-----------------------------+
-                      |   prosemirror-commands      |
-                      +--------------+--------------+
-                                     |
-                      +--------------v--------------+
-                      |    prosemirror-history      |
-                      +--------------+--------------+
-                                     |
-                      +--------------v--------------+
-                      |     prosemirror-state       |
-                      +--------------+--------------+
-                                     |
-                      +--------------v--------------+
-                      |   prosemirror-transform     |
-                      +--------------+--------------+
-                                     |
-                      +--------------v--------------+
-                      |     prosemirror-model       |
-                      +-----------------------------+
-                                     ^
-         +---------------------------+---------------------------+
-         |                                                       |
-+--------+---------------+                             +---------+---------+
-|    prosemirror-view    |                             | prosemirror-fuzz  |
-|  (Parley, AccessKit,   |                             |   (Differential   |
-|      cosmic-text)      |                             |   Node Oracle)    |
-+------------------------+                             +-------------------+
+The model, transform, state, history, commands, list, test-builder, and collaboration suites carry cases from the corresponding upstream test files. The view ports cover the decoration data structures and clipboard behavior. The upstream browser `EditorView`, DOM observer, rendering, event, and browser selection suites remain open, as do upstream extension packages absent from the workspace.
+
+Positions and internal text edits use UTF-16 code units. The model exposes `Node::text_utf16()` for exact access to isolated surrogate code units. Rust UTF-8, DOM text, and JSON APIs represent those isolated units with replacement characters.
+
+## Verification
+
+Run the JavaScript reference checks locally.
+
+```shell
+npm ci
+npm test
 ```
 
-### Crate Dependency Order
+GitHub Actions compiles Rust and runs the workspace tests, doctests, differential fuzzer, and Clippy on Linux, macOS, and Windows. The fuzzer compares application outcomes, document JSON, step maps, position mappings and deletion flags, and inverse steps with the pinned JavaScript oracle. A mismatch writes `repro_case_<iteration>.json`.
 
-1. **`prosemirror-model`**: Document tree representation (`Node`, `Fragment`, `Mark`, `Slice`, `ResolvedPos`, `Schema`). Fully interoperable with ProseMirror JSON format.
-2. **`prosemirror-transform`**: Document modification primitives (`StepMap`, `Mapping`, `Step`, `ReplaceStep`, `Transform`). Exact position mapping parity with ProseMirror.
-3. **`prosemirror-state`**: Immutable editor state (`EditorState`, `Selection`, `Transaction`, `Plugin`, `StateField`).
-4. **`prosemirror-history`**: Undo and redo history manager with branch compression and selection bookmarks.
-5. **`prosemirror-commands`**: Core editing commands (`split_block`, `join_backward`, `delete_selection`, `toggle_mark`, `chain_commands`).
-6. **`prosemirror-test-builder`**: Test DSL and macros (`doc!`, `p!`, tagged positions `<a>...<b>`) matching `prosemirror-test-builder`.
-7. **`prosemirror-view`**: Native view architecture (no Chromium or DOM):
-   - Text layout & shaping via **Parley** and **cosmic-text**.
-   - Accessibility tree synchronization with **AccessKit**.
-   - Windows IME / TSF composition state management.
-   - Mobile touch selection handles with 44pt touch targets and loupe magnifier.
-   - Google Docs clipboard parser and HTML sanitizer.
-8. **`prosemirror-fuzz`**: Continuous differential fuzzer testing Rust implementation against the Node.js ProseMirror oracle.
-
----
-
-## Pinned Upstream Reference Versions
-
-To guarantee 1-to-1 behavioral parity and prevent divergence, the Rust logic layer is pinned against the following ProseMirror npm releases:
-
-| Upstream Package | Pinned Version | Role |
-| :--- | :--- | :--- |
-| `prosemirror-model` | `1.24.1` | Document tree, schema, positions |
-| `prosemirror-transform` | `1.10.2` | Steps, step maps, mapping algorithms |
-| `prosemirror-state` | `1.4.3` | Selections, transactions, plugin lifecycle |
-| `prosemirror-history` | `1.4.1` | Undo/redo stack management |
-| `prosemirror-commands` | `1.6.2` | Keymap commands & text manipulation |
-| `prosemirror-test-builder` | `1.1.1` | Declarative test structure and tags |
-
----
-
-## Differential Fuzzing with Node Oracle
-
-Differential fuzzing ensures 100% parity by comparing Rust outcomes directly against upstream JavaScript ProseMirror:
-
-1. The fuzzer generates arbitrary valid ProseMirror document trees.
-2. It generates valid transactions and steps (`ReplaceStep`, `AddMarkStep`, `RemoveMarkStep`).
-3. It executes the steps concurrently in Rust and in Node.js via `oracle/server.js`.
-4. It compares:
-   - Output document JSON (must be identical).
-   - `StepMap` ranges and position mappings (must be identical).
-   - Inversion outcomes (must be identical).
-5. If any mismatch occurs, it emits a standalone `repro_case_<id>.json` reproducer file.
-
-### Running Differential Fuzzing
-
-```bash
-# Verify the Node oracle
-node oracle/test_oracle.js
-
-# Run differential fuzzing harness (via GitHub Actions CI or locally if toolchains present)
-cargo run --bin prosemirror-fuzz -- --iterations 500 --oracle oracle/server.js
-```
-
----
-
-## Native View Spikes
-
-`prosemirror-view` addresses 5 notoriously complex rich-text editing challenges in a native context:
-
-1. **Hindi via Gboard**: Employs Unicode extended grapheme cluster segmentation (`unicode-segmentation`) to prevent splitting Devanagari conjuncts and halant viramas.
-2. **iOS Selection Handles**: Apple Human Interface Guidelines compliant 44pt hit targets, teardrop grabbers, and a floating loupe magnifier.
-3. **Windows IME (TSF)**: Non-destructive composition strings anchored to caret screen coordinates without polluting the undo history until committed.
-4. **Screen Readers via AccessKit**: Continuous projection of `EditorState` into an accessible `AccessKit` tree (`Role::Document`, `Role::Paragraph`, `Role::InlineTextBox`).
-5. **Google Docs Clipboard**: Extracts semantic structures, stripping `docs-internal-guid` wrappers while preserving bold, italic, and heading marks.
-
----
-
-## Continuous Integration
-
-Compilation and verification run in GitHub Actions on every push and pull request across Linux, Windows, and macOS:
-
-- `cargo fmt --check`
-- `cargo check --workspace --all-targets`
-- `cargo test --workspace --verbose`
-- `cargo clippy --workspace --all-targets -- -D warnings`
-- `cargo run --bin prosemirror-fuzz -- --iterations 200`
+The original Rust integration tests are registered in `crates/prosemirror-integration-tests`. Crate-specific tests live alongside the ports. Fixture-driven tests retain the upstream test names and evaluate the behavior in Rust against the upstream expectations.

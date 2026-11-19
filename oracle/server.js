@@ -2,6 +2,15 @@ import fs from 'node:fs';
 import { schema } from 'prosemirror-schema-basic';
 import { Step } from 'prosemirror-transform';
 
+function applyStep(step, doc) {
+  try {
+    return step.apply(doc);
+  } catch (error) {
+    if (error instanceof RangeError) return { doc: null, failed: error.message };
+    throw error;
+  }
+}
+
 // Reads a JSON request from stdin: { doc: {...}, step: {...} }
 function main() {
   const input = fs.readFileSync(0, 'utf-8');
@@ -14,7 +23,7 @@ function main() {
     const doc = schema.nodeFromJSON(docJson);
     const step = Step.fromJSON(schema, stepJson);
 
-    const result = step.apply(doc);
+    const result = applyStep(step, doc);
 
     if (result.doc) {
       const stepMap = step.getMap();
@@ -27,7 +36,7 @@ function main() {
         }
       }
       const inverse = step.invert(doc);
-      const undone = inverse.apply(result.doc);
+      const undone = applyStep(inverse, result.doc);
       const output = {
         success: true,
         doc: result.doc.toJSON(),

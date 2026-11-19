@@ -68,6 +68,8 @@ pub trait StateField: Send + Sync {
     fn to_json(&self, value: &Value) -> Value {
         value.clone()
     }
+
+    #[allow(clippy::wrong_self_convention)]
     fn from_json(&self, value: &Value) -> Value {
         value.clone()
     }

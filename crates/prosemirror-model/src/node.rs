@@ -565,6 +565,9 @@ impl Node {
 
     pub fn cut(&self, from: usize, to: usize) -> Self {
         if let Some(units) = self.text_utf16() {
+            if from == 0 && to == units.len() {
+                return self.clone();
+            }
             let end = to.min(units.len());
             self.with_text_utf16(&units[from.min(end)..end])
         } else if from == 0 && to == self.content().size() {
@@ -572,6 +575,10 @@ impl Node {
         } else {
             self.copy(Some(self.content().cut(from, to)))
         }
+    }
+
+    pub(crate) fn same_text(&self, other: &Self) -> bool {
+        self.text() == other.text() && self.unpaired_text == other.unpaired_text
     }
 
     pub fn same_markup(&self, other: &Node) -> bool {
@@ -739,8 +746,7 @@ impl Node {
 impl PartialEq for Node {
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.inner, &other.inner) || (
-            self.same_markup(other) && self.text() == other.text() && self.content() == other.content()
-                && self.unpaired_text == other.unpaired_text
+            self.same_markup(other) && self.same_text(other) && self.content() == other.content()
         )
     }
 }
